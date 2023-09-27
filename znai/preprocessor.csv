@@ -1,0 +1,7 @@
+```\{=html}[^`]*?MDX[^']*?```,
+```\{=html}\s*<iframe data-external="1" src="https://bonsai:8535([^"]+)"[^`]*?```, ":include-iframe: bonsai-build/$1 {fit: true, light: {background: '#e9edf2', 'color-scheme': 'light', color: '#28487c'}, dark: {background: '#101318', 'color-scheme': 'dark', color: '#bac9e2'}}"
+```\{=html}\s*</iframe[^`]*?```,
+```\{=html}\s*<aside>\s*```,``````attention-note
+```\{=html}\s*?</aside>\s*?```,``````
+```\{=html}\s*?```,
+# \d+\s-\s[^\n]+,
