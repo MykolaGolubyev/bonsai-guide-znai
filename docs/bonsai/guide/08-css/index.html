@@ -1,0 +1,1601 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Css</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Handwritten .css Files</h1></header>
+<p>Styling an application is very important. Not only is it critical for making an app look good, but &quot;styling&quot; is also responsible for component layout.However, there are a few different ways to include style information in your app or library, each with their own tradeoffs:Hand-written .css files style properties in vdom nodes ppx_css for inline stylesheets Using .css files to style components and pages is very common in web development. The Mozilla Developer Network has a very good https://developer.mozilla.org/en-US/docs/Learn/Getting_started_with_the_web/CSS_basics introductory tutorial on CSS if you aren't already familiar with it. Google also has a https://web.dev/learn/css/ comprehensive tutorial.At its core, a css stylesheet is a language for pattern-matching on DOM tree structure combined with a set of rules that should be applied to matching elements.With this css: &lt;!-- $MDX skip --&gt; {=html} css table { border-collapse: collapse; } table td { padding: 4px; } table thead { text-align: center; background: brown; color: antiquewhite; font-weight: bold; } table tr { background: antiquewhite; } table tr:nth-child(even) { background: wheat; } And some basic table code, we get a pretty table! ocaml type row = { id : int ; name : string ; age : int } let basic_table rows = let open Vdom.Node in let thead = thead [ td [ text &quot;id&quot; ]; td [ text &quot;name&quot; ]; td [ text &quot;age&quot; ] ] in let tbody = rows |&gt; List.map ~f:(fun { id; name; age } -&gt; tr [ td [ textf &quot;%d&quot; id ]; td [ text name ]; td [ textf &quot;%d&quot; age ] ]) |&gt; tbody in table [ thead; tbody ] ;; let politicians = basic_table [ { id = 0; name = &quot;George Washington&quot;; age = 67 } ; { id = 1; name = &quot;Alexander Hamilton&quot;; age = 47 } ; { id = 2; name = &quot;Abraham Lincoln&quot;; age = 56 } ] ;; By keeping the styling logic and vdom-node production separate, our css can be quite high-level. Sadly, the &quot;high level description&quot; of the pattern for this table might be more broad than we had hoped; this css will style every table in our application, even those created by other components that you might not own!A common fix for this problem is to make the patterns more specific by adding a unique class name targeting just the tables that we want. For example: diff - table { + table.politicians { border-collapse: collapse; } - table td { + table.politicians td { padding: 4px; } - table thead { + table.politicians thead { text-align: center; background: brown; color: antiquewhite; font-weight: bold; } - table tr { + table.politicians tr { background: antiquewhite; } - table tr:nth-child(even) { + table.politicians tr:nth-child(even) { background: wheat; } and then in the table production code, diff - table [ thead; tbody ] + table ~attr:(Vdom.Attr.class_ &quot;politician&quot;) [ thead; tbody ] This solves the issue of our styles inadvertantly obliterating other people's components, but comes at the cost of verbosity. It also isn't completely foolproof: if two people pick the same identifier (in this case we went with politician ), then the clash would still occur. This leads to people using very long and descriptive identifiers to reduce the odds of a collision.Another downside is that if you're an application author pulling in a UI component which has a stylesheet, then you need to somehow get that css file into your application. Typically this is done by writing a dune rule that concatenates your application's stylesheet with the stylesheets of any dependencies, like so: lisp (rule ( (targets (style.css)) (deps (%{root}/lib/dygraph/dist/dygraph.css ./my_styles.css)) (action &quot;cat %{deps} &gt; %{target}&quot;))) If a component requires a stylesheet, there is no way of knowing that fact (other than by reading the readmes, but who does that?).ProsFull access to CSS language including pseudoselectors (like :nth-child(even) , or :hover ) Good debugging support in Chrome Devtools ConsIdentifier collisions can break things in subtle ways Reusable components that rely on a css stylesheet force the application author to use css files and to build out the dune rule for concatenating all of their dependencies' css.</p>
+</article>
+
+<article>
+<header><h1>Vdom.Attr.style</h1></header>
+<p>Another way to add styling to DOM nodes is through an individual DOM node's style property. Vdom.Attr.style has this type signature: Css_gen.t -&gt; Vdom.Attr.t , so we'll be primarily looking at the Css_gen .A Css_gen.t is a collection of key-value pairs of css properties and their values. As an example, ocaml let style: Css_gen.t = Css_gen.text_align `Center is a style that only contains the kv-pair text-align: center; . Meanwhile, ocaml let style: Css_gen.t = let open Css_gen in text_align `Center @&gt; background_color (`Name &quot;red&quot;) makes use of the @&gt; operator in order to merge two Css_gen.t s, producing kv-pairs which contain text-align: center; background: red; .If we ported the table example to use the inline style attribute, our code would now look like this: ocaml type row2 = { id : int ; name : string ; age : int } let table_styles = let open Css_gen in border_collapse `Collapse @&gt; border ~style:`Solid ~color:(`Name &quot;brown&quot;) ~width:(`Px 1) () ;; let thead_styles = let open Css_gen in text_align `Center @&gt; background_color (`Name &quot;brown&quot;) @&gt; color (`Name &quot;antiquewhite&quot;) @&gt; font_weight `Bold ;; let tr_odd = Css_gen.background_color (`Name &quot;antiquewhite&quot;) let tr_even = Css_gen.background_color (`Name &quot;wheat&quot;) let td_styles = Css_gen.padding ~top:(`Px 4) ~bottom:(`Px 4) ~left:(`Px 4) ~right:(`Px 4) () ;; let basic_table_attr rows = let open Vdom.Node in let thead = thead ~attrs:[ Vdom.Attr.style thead_styles ] [ td [ text &quot;id&quot; ]; td [ text &quot;name&quot; ]; td [ text &quot;age&quot; ] ] in let tbody = rows |&gt; List.mapi ~f:(fun i { id; name; age } -&gt; let tr_style = if Int.( % ) i 2 = 0 then tr_even else tr_odd in tr ~attrs:[ Vdom.Attr.style tr_style ] [ td ~attrs:[ Vdom.Attr.style td_styles ] [ textf &quot;%d&quot; id ] ; td ~attrs:[ Vdom.Attr.style td_styles ] [ text name ] ; td ~attrs:[ Vdom.Attr.style td_styles ] [ textf &quot;%d&quot; age ] ]) |&gt; tbody in table ~attrs:[ Vdom.Attr.style table_styles ] [ thead; tbody ] ;; let politicians = basic_table_attr [ { id = 0; name = &quot;George Washington&quot;; age = 67 } ; { id = 1; name = &quot;Alexander Hamilton&quot;; age = 47 } ; { id = 2; name = &quot;Abraham Lincoln&quot;; age = 56 } ] ;; Because we're no longer using a css file, the first part of the file re-defines all of the styling in OCaml using Css_gen . However, these styles are not applied automatically, so we also need to add calls to Vdom.Attr.style everywhere.In a particularly egregious case, we changed from using List.map to List.mapi , which allowed us to check if the row is even or odd, something that was previously done for us by our stylesheet. This brings us to our first major drawback of using inline style attributes: pseudo-selectors are unavailable. Some of these, like :nth-child , are implementable in our view-calculation logic because we're manually constructing the lists anyway. However, other pseudo-selectors like :hover or :focus are impossible, and others, like :nth-of-type are possible, but hair-pullingly annoying.ProsNo need to worry about identifier clashes because styles are stuck directly on the nodes themselves. If used in a library, the styles come with the library instead of being another css file that library users need to know about and manage. ConsMuch more verbose. Many css-attributes are missing from the Css_gen library (you can work around this with Css_gen.create ). Pseudo-selectors just aren't available.</p>
+</article>
+
+<article>
+<header><h1>CSS Ppx</h1></header>
+<p>The third option is to use a brand new ppx: ppx_css ! With this ppx, you can write css code in your .ml files, and it will be loaded into the document at page-load. To use the ppx, add it to your jbuild like so: diff (executables ( (names (main)) (libraries (bonsai_web)) + (preprocess (pps (ppx_jane ppx_css))) (js_of_ocaml ()))) And now you can bind a module to the result of a css ppx invocation: ocaml module Style = [%css stylesheet {| table.politicians { border-collapse: collapse; border: 1px solid brown; } table.politicians td { padding: 4px; } table.politicians thead { text-align: center; background: brown; color: antiquewhite; font-weight: bold; } table.politicians tr { background: antiquewhite; } table.politicians tr:nth-child(even) { background: wheat; } |}] This is the exact same css from the second example! Notice that it still has a &quot;politicians&quot; class before every rule. With this new Style module bound, we can almost keep the same ocaml view generation as we had originally: ocaml let table_with_ppx_css rows = let open Vdom.Node in let thead = thead [ td [ text &quot;id&quot; ]; td [ text &quot;name&quot; ]; td [ text &quot;age&quot; ] ] in let tbody = rows |&gt; List.map ~f:(fun { id; name; age } -&gt; tr [ td [ textf &quot;%d&quot; id ]; td [ text name ]; td [ textf &quot;%d&quot; age ] ]) |&gt; tbody in table ~attrs:[ Style.politicians ] [ thead; tbody ] ;; The only difference between this function and the first one we wrote is this: diff - table ~attr:(Vdom.Attr.class_ &quot;politicians&quot;) [ thead; tbody ] + table ~attr:(Vdom.Attr.class_ Style.politicians) [ thead; tbody ] This Style.politicians value was generated by the ppx because it noticed that we were using it as a class-name. The ppx will also uniquify all of the class names and ids that it finds in the stylesheet. As an example, the first rule's selector will become table.politicians_hash_e82ee99238 , where the unique name is generated by hashing the contents of the css string as well as the path to the file containing the ppx. This means that Style.politicians is a string with the value politicians_hash_e82ee99238 , which we use for the classname.This kind of identifier hashing is useful because it means that component authors don't need to worry about collisions.</p>
+</article>
+
+<article>
+<header><h1>[~rewrite] flag</h1></header>
+<p>Sometimes, like when interacting with customization APIs that require specific classnames for CSS customization, ppx_css's hygenic identifier hashing could get in your way. With [~rewrite], you get to choose the name for an identifier rather than ppx_css choosing - or rather hashing - it for you. ocaml (* A table library's customization API _needs_ users to style the &quot;table-header&quot; class. *) stylesheet {|.table-header {...}|} You can disable hashing when needed by using the optional ~rewrite parameter. ocaml (* Scenario: A table library's customization API _needs_ users to style the &quot;table-header&quot; class. *) stylesheet ~rewrite:[&quot;table-header&quot;, &quot;table-header&quot;] {|.table-header {...}|} The above segment will &quot;rewrite&quot; table-header into table-header overriding the default hashing behavior.Some other times, you might still want hygenic hashing, but need the same identifier to have the same hash between two specific [%css stylesheet] invocations. Here are some examples of the rewrite flag in action: ocaml stylesheet ~rewrite:[ &quot;table-header&quot;, &quot;table-header&quot;; &quot;table_row&quot;, &quot;table-row&quot; ] {|...|} (* Rewrites multiple identifiers at once. *) stylesheet ~rewrite:[ &quot;my_table&quot;, My_table_component.table ] {|...|} (* References an identifier defined in another module *) |xxx}];</p>
+</article>
+
+<article>
+<header><h1>Theming through PPX CSS</h1></header>
+<p>One additional benefit is that this ppx/inliner opens up doors for allowing components to be customized by their users. The Style module that the ppx derived actually has this signature: ocaml sig module type S = sig val politicians : string end type t = (module S) val default : t val politicians : string end While we were just using the default politicians value, the module type and a default packed module implementing that module type are intended to be used for making it easy for component authors to allow their users to theme the components.By tweaking the code slightly we can see how this is possible: diff - let table_with_ppx_css rows = + let table_with_ppx_css ?(theme=Style.default) rows = + let module Style = (val theme) in let open Vdom.Node in let thead = thead [ td [ text &quot;id&quot; ]; td [ text &quot;name&quot; ]; td [ text &quot;age&quot; ] ] in let tbody = rows |&gt; List.map ~f:(fun { id; name; age } -&gt; tr [ td [ textf &quot;%d&quot; id ]; td [ text name ]; td [ textf &quot;%d&quot; age ] ]) |&gt; tbody in table ~attr:(Vdom.Attr.class_ Style.politicians) [ thead; tbody ] ;; now someone could make a new module which implements that type: ocaml module My_theme = [%css stylesheet {| table.politicians { border-collapse: collapse; border: 1px solid black; } table.politicians td { padding: 4px; } table.politicians thead { text-align: center; background: black; color: white; font-weight: bold; } table.politicians td { border: 1px solid black; } |}] let table = themeable_table ~theme:(module My_theme) [ { id = 0; name = &quot;George Washington&quot;; age = 67 } ; { id = 1; name = &quot;Alexander Hamilton&quot;; age = 47 } ; { id = 2; name = &quot;Abraham Lincoln&quot;; age = 56 } ] ;; Due to the nature of the generated code, there are a few restrictions on the person building a custom theme:No new identifiers are allowed. This means that if a component author uses a dumb name like &quot;politicians&quot;, then a theme author needs to as well. All identifiers present in the component definition must be used. You can use an empty rule like .politicians {} in order to meet this requirement if you wanted to avoid themeing something. These restrictions may seem onerous, but it's a lot like using a record in OCaml: the author of the record gets to decide what the names of the fields are, and if someone wants to construct a value of that record, they can't just leave out the fields that they don't care about. This means that component authors should think ahead and ask themselves &quot;what kind of customizability will users of this component want?&quot; before settling on a set of identifiers and picking which nodes they're attached to.There are (plans for) other kinds of ppx transformations other than just the identifier re-writing, such as automatically introducing the namespacing classnames for you. Those aren't here yet, but they might be soon.It should be noted that even with the classname hashing, it's still possible to write rules that affect more than you might like. I actually included a number of bugs of this form in the examples so far (!). .table.politicians td affects every td inside of the table, even tables within tables. So if one of the cells of this table contained another table that was styled differently, we'd run the risk of overwriting it. The &quot;correct&quot; rule in this case would be to fully qualify the paths to the elements, so table.politicians td would become table.politicians &gt; tbody &gt; tr &gt; td .ProsFull access to CSS language including pseudoselectors (like :nth-child(even) , or :hover ) Good debugging support in Chrome Devtools No need to worry about identifier clashes because these identifiers are hashed before being used. If used in a library, the styles come with the library instead of being another css file that library users need to know about and manage. ConsIt's still up to you to make sure that styles aren't too general (this is going to be addresed in further releases of the ppx.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "Styling an application is very important. Not only is it critical for",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "making an app ",
+        "type" : "SimpleText"
+      }, {
+        "type" : "Emphasis",
+        "content" : [ {
+          "text" : "look",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "text" : " good, but \"styling\" is also responsible for",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "component layout.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "However, there are a few different ways to include style information in",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "your app or library, each with their own tradeoffs:",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "delimiter" : ".",
+      "startNumber" : 1,
+      "type" : "OrderedList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Hand-written .css files",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "style",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " properties in vdom nodes",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "ppx_css",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " for inline stylesheets",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "id" : "handwritten-css-files",
+      "title" : "Handwritten .css Files",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Using .css files to style components and pages is very common in web",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "development. The Mozilla Developer Network has a very good ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Learn/Getting_started_with_the_web/CSS_basics",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "introductory",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "tutorial",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "on CSS if you aren't already familiar with it. Google also has a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "url" : "https://web.dev/learn/css/",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "comprehensive tutorial",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "At its core, a css stylesheet is a language for pattern-matching on DOM",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "tree structure combined with a set of rules that should be applied to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "matching elements.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "With this css: ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "<!-- $MDX skip -->",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "{=html}",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "css",
+        "snippet" : "table {\n  border-collapse: collapse;\n}\n\ntable td {\n  padding: 4px;\n}\n\ntable thead {\n  text-align: center;\n  background: brown;\n  color: antiquewhite;\n  font-weight: bold;\n}\n\ntable tr {\n  background: antiquewhite;\n}\n\ntable tr:nth-child(even) {\n  background: wheat;\n}\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "And some basic table code, we get a pretty table!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "type row =\n  { id : int\n  ; name : string\n  ; age : int\n  }\n\nlet basic_table rows =\n  let open Vdom.Node in\n  let thead = thead [ td [ text \"id\" ]; td [ text \"name\" ]; td [ text \"age\" ] ] in\n  let tbody =\n    rows\n    |> List.map ~f:(fun { id; name; age } ->\n      tr [ td [ textf \"%d\" id ]; td [ text name ]; td [ textf \"%d\" age ] ])\n    |> tbody\n  in\n  table [ thead; tbody ]\n;;\n\nlet politicians =\n  basic_table\n    [ { id = 0; name = \"George Washington\"; age = 67 }\n    ; { id = 1; name = \"Alexander Hamilton\"; age = 47 }\n    ; { id = 2; name = \"Abraham Lincoln\"; age = 56 }\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#politician-table",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "By keeping the styling logic and vdom-node production separate, our css",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "can be quite high-level. Sadly, the \"high level description\" of the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "pattern for this table might be more broad than we had hoped; this css",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "will style ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "every",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " table in our application, even those created by other",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "components that you might not own!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "A common fix for this problem is to make the patterns more specific by",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "adding a unique class name targeting just the tables that we want. For",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "example:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "diff",
+        "snippet" : "- table {\n+ table.politicians {\n    border-collapse: collapse;\n  }\n\n- table td {\n+ table.politicians td {\n    padding: 4px;\n  }\n\n- table thead {\n+ table.politicians thead {\n    text-align: center;\n    background: brown;\n    color: antiquewhite;\n    font-weight: bold;\n  }\n\n- table tr {\n+ table.politicians tr {\n    background: antiquewhite;\n  }\n\n- table tr:nth-child(even) {\n+ table.politicians tr:nth-child(even) {\n    background: wheat;\n  }\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "and then in the table production code,",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "diff",
+        "snippet" : "- table [ thead; tbody ]\n+ table ~attr:(Vdom.Attr.class_ \"politician\") [ thead; tbody ]\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This solves the issue of our styles inadvertantly obliterating other",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "people's components, but comes at the cost of verbosity. It also isn't",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "completely foolproof: if two people pick the same identifier (in this",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "case we went with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "politician",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "), then the clash would still occur. This",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "leads to people using very long and descriptive identifiers to reduce",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the odds of a collision.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Another downside is that if you're an application author pulling in a UI",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "component which has a stylesheet, then you need to somehow get that css",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "file into your application. Typically this is done by writing a dune",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "rule that concatenates your application's stylesheet with the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "stylesheets of any dependencies, like so:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "lisp",
+        "snippet" : "(rule (\n  (targets (style.css))\n  (deps    (%{root}/lib/dygraph/dist/dygraph.css ./my_styles.css))\n  (action \"cat %{deps} > %{target}\")))\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "If a component requires a stylesheet, there is no way of knowing that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "fact (other than by reading the readmes, but who does that?).",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "type" : "StrongEmphasis",
+          "content" : [ {
+            "text" : "Pros",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Full access to CSS language including pseudoselectors (like",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : ":nth-child(even)",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ", or ",
+              "type" : "SimpleText"
+            }, {
+              "code" : ":hover",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ")",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Good debugging support in Chrome Devtools",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "type" : "StrongEmphasis",
+          "content" : [ {
+            "text" : "Cons",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Identifier collisions can break things in subtle ways",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Reusable components that rely on a css stylesheet force the",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "application author to use css files and to build out the dune rule",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "for concatenating all of their dependencies' css.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      } ]
+    }, {
+      "id" : "vdom-attr-style",
+      "title" : "Vdom.Attr.style",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Another way to add styling to DOM nodes is through an individual DOM",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "node's ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "style",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " property. ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Attr.style",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " has this type signature:",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Css_gen.t -> Vdom.Attr.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", so we'll be primarily looking at the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Css_gen",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "A ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Css_gen.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is a collection of key-value pairs of css properties and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "their values. As an example,",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let style: Css_gen.t = Css_gen.text_align `Center\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "is a style that only contains the kv-pair ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "text-align: center;",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Meanwhile,",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let style: Css_gen.t =\n  let open Css_gen in\n  text_align `Center @> background_color (`Name \"red\")\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "makes use of the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "@>",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " operator in order to merge two ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Css_gen.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "s,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "producing kv-pairs which contain ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "text-align: center; background: red;",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "If we ported the table example to use the inline style attribute, our",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "code would now look like this:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "type row2 =\n  { id : int\n  ; name : string\n  ; age : int\n  }\n\nlet table_styles =\n  let open Css_gen in\n  border_collapse `Collapse\n  @> border ~style:`Solid ~color:(`Name \"brown\") ~width:(`Px 1) ()\n;;\n\nlet thead_styles =\n  let open Css_gen in\n  text_align `Center\n  @> background_color (`Name \"brown\")\n  @> color (`Name \"antiquewhite\")\n  @> font_weight `Bold\n;;\n\nlet tr_odd = Css_gen.background_color (`Name \"antiquewhite\")\nlet tr_even = Css_gen.background_color (`Name \"wheat\")\n\nlet td_styles =\n  Css_gen.padding ~top:(`Px 4) ~bottom:(`Px 4) ~left:(`Px 4) ~right:(`Px 4) ()\n;;\n\nlet basic_table_attr rows =\n  let open Vdom.Node in\n  let thead =\n    thead\n      ~attrs:[ Vdom.Attr.style thead_styles ]\n      [ td [ text \"id\" ]; td [ text \"name\" ]; td [ text \"age\" ] ]\n  in\n  let tbody =\n    rows\n    |> List.mapi ~f:(fun i { id; name; age } ->\n      let tr_style = if Int.( % ) i 2 = 0 then tr_even else tr_odd in\n      tr\n        ~attrs:[ Vdom.Attr.style tr_style ]\n        [ td ~attrs:[ Vdom.Attr.style td_styles ] [ textf \"%d\" id ]\n        ; td ~attrs:[ Vdom.Attr.style td_styles ] [ text name ]\n        ; td ~attrs:[ Vdom.Attr.style td_styles ] [ textf \"%d\" age ]\n        ])\n    |> tbody\n  in\n  table ~attrs:[ Vdom.Attr.style table_styles ] [ thead; tbody ]\n;;\n\nlet politicians =\n  basic_table_attr\n    [ { id = 0; name = \"George Washington\"; age = 67 }\n    ; { id = 1; name = \"Alexander Hamilton\"; age = 47 }\n    ; { id = 2; name = \"Abraham Lincoln\"; age = 56 }\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Because we're no longer using a css file, the first part of the file",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "re-defines all of the styling in OCaml using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Css_gen",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". However, these",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "styles are not applied automatically, so we also need to add calls to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Attr.style",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " everywhere.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In a particularly egregious case, we changed from using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "List.map",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "List.mapi",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which allowed us to check if the row is even or odd,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "something that was previously done for us by our stylesheet. This brings",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "us to our first major drawback of using inline style attributes:",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "pseudo-selectors are unavailable. Some of these, like ",
+          "type" : "SimpleText"
+        }, {
+          "code" : ":nth-child",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "implementable in our view-calculation logic because we're manually",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "constructing the lists anyway. However, other pseudo-selectors like",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : ":hover",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " or ",
+          "type" : "SimpleText"
+        }, {
+          "code" : ":focus",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " are impossible, and others, like ",
+          "type" : "SimpleText"
+        }, {
+          "code" : ":nth-of-type",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "possible, but hair-pullingly annoying.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "type" : "StrongEmphasis",
+          "content" : [ {
+            "text" : "Pros",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "No need to worry about identifier clashes because styles are stuck",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "directly on the nodes themselves.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "If used in a library, the styles come with the library instead of",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "being another css file that library users need to know about and",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "manage.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "type" : "StrongEmphasis",
+          "content" : [ {
+            "text" : "Cons",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Much more verbose.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Many css-attributes are missing from the ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Css_gen",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " library (you can",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "work around this with ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Css_gen.create",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ").",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Pseudo-selectors just aren't available.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      } ]
+    }, {
+      "id" : "css-ppx",
+      "title" : "CSS Ppx",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The third option is to use a brand new ppx: ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "ppx_css",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "! With this ppx,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "you can write css code in your .ml files, and it will be loaded into the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "document at page-load. To use the ppx, add it to your jbuild like so:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "diff",
+        "snippet" : " (executables (\n   (names (main))\n   (libraries (bonsai_web))\n+  (preprocess (pps (ppx_jane ppx_css)))\n   (js_of_ocaml ())))\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "And now you can bind a module to the result of a css ppx invocation:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module Style =\n  [%css\n    stylesheet\n      {|\ntable.politicians {\n  border-collapse: collapse;\n  border: 1px solid brown;\n}\n\ntable.politicians td {\n  padding: 4px;\n}\n\ntable.politicians thead {\n  text-align: center;\n  background: brown;\n  color: antiquewhite;\n  font-weight: bold;\n}\n\ntable.politicians tr {\n  background: antiquewhite;\n}\n\ntable.politicians tr:nth-child(even) {\n  background: wheat;\n}\n    |}]\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This is the exact same css from the second example! Notice that it still",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "has a \"politicians\" class before every rule. With this new ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Style",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "module bound, we can ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "almost",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " keep the same ocaml view generation as we",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "had originally:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let table_with_ppx_css rows =\n  let open Vdom.Node in\n  let thead = thead [ td [ text \"id\" ]; td [ text \"name\" ]; td [ text \"age\" ] ] in\n  let tbody =\n    rows\n    |> List.map ~f:(fun { id; name; age } ->\n      tr [ td [ textf \"%d\" id ]; td [ text name ]; td [ textf \"%d\" age ] ])\n    |> tbody\n  in\n  table ~attrs:[ Style.politicians ] [ thead; tbody ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The only difference between this function and the first one we wrote is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "this:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "diff",
+        "snippet" : "- table ~attr:(Vdom.Attr.class_ \"politicians\") [ thead; tbody ]\n+ table ~attr:(Vdom.Attr.class_ Style.politicians) [ thead; tbody ]\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Style.politicians",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " value was generated by the ppx because it",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "noticed that we were using it as a class-name. The ppx will also",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "uniquify all of the class names and ids that it finds in the stylesheet.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "As an example, the first rule's selector will become",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "table.politicians_hash_e82ee99238",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", where the unique name is generated",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "by hashing the contents of the css string as well as the path to the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "file containing the ppx. This means that ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Style.politicians",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is a string",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "with the value ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "politicians_hash_e82ee99238",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which we use for the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "classname.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This kind of identifier hashing is useful because it means that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "component authors don't need to worry about collisions.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "rewrite-flag",
+      "title" : "[~rewrite] flag",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Sometimes, like when interacting with customization APIs that require",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "specific classnames for CSS customization, ppx_css's hygenic identifier",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "hashing could get in your way. With [~rewrite], you get to choose the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "name for an identifier rather than ppx_css choosing - or rather",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "hashing - it for you.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "(* A table library's customization API _needs_ users to style the \"table-header\" class. *)\nstylesheet {|.table-header {...}|}\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "You can disable hashing when needed by using the optional ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "~rewrite",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "parameter.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "(* Scenario: A table library's customization API _needs_ users to style the \"table-header\" class. *)\nstylesheet ~rewrite:[\"table-header\", \"table-header\"] {|.table-header {...}|}\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The above segment will \"rewrite\" ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "table-header",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " into ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "table-header",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "overriding the default hashing behavior.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Some other times, you might still want hygenic hashing, but need the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "same identifier to have the same hash between two specific [%css",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "stylesheet] invocations. Here are some examples of the rewrite flag in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "action:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "stylesheet ~rewrite:[ \"table-header\", \"table-header\"; \"table_row\", \"table-row\" ] {|...|} (* Rewrites multiple identifiers at once. *)\nstylesheet ~rewrite:[ \"my_table\", My_table_component.table ] {|...|} (* References an identifier defined in another module *) |xxx}];\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      } ]
+    }, {
+      "id" : "theming-through-ppx-css",
+      "title" : "Theming through PPX CSS",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "One additional benefit is that this ppx/inliner opens up doors for",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "allowing components to be customized by their users. The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Style",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " module",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "that the ppx derived actually has this signature:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "sig\n  module type S  = sig\n    val politicians : string\n  end\n\n  type t = (module S)\n\n  val default : t\n  val politicians : string\nend\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "While we were just using the default ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "politicians",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " value, the module",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "type and a default packed module implementing that module type are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "intended to be used for making it easy for component authors to allow",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "their users to theme the components.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "By tweaking the code slightly we can see how this is possible:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "diff",
+        "snippet" : "- let table_with_ppx_css rows =\n+ let table_with_ppx_css ?(theme=Style.default) rows =\n+   let module Style = (val theme) in\n    let open Vdom.Node in\n    let thead =\n      thead [ td [ text \"id\" ]; td [ text \"name\" ]; td [ text \"age\" ] ]\n    in\n    let tbody =\n      rows\n      |> List.map ~f:(fun { id; name; age } ->\n        tr\n          [ td [ textf \"%d\" id ]; td [ text name ]; td [ textf \"%d\" age ] ])\n      |> tbody\n    in\n    table ~attr:(Vdom.Attr.class_ Style.politicians) [ thead; tbody ]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "now someone could make a new module which implements that type:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module My_theme =\n  [%css\n    stylesheet\n      {|\ntable.politicians {\n  border-collapse: collapse;\n  border: 1px solid black;\n}\n\ntable.politicians td {\n  padding: 4px;\n}\n\ntable.politicians thead {\n  text-align: center;\n  background: black;\n  color: white;\n  font-weight: bold;\n}\n\ntable.politicians td {\n  border: 1px solid black;\n}\n\n    |}]\n\nlet table =\n  themeable_table\n    ~theme:(module My_theme)\n    [ { id = 0; name = \"George Washington\"; age = 67 }\n    ; { id = 1; name = \"Alexander Hamilton\"; age = 47 }\n    ; { id = 2; name = \"Abraham Lincoln\"; age = 56 }\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#themeable-table",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Due to the nature of the generated code, there are a few restrictions on",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the person building a custom theme:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "No new identifiers are allowed. This means that if a component",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "author uses a dumb name like \"politicians\", then a theme author",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "needs to as well.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "type" : "Emphasis",
+              "content" : [ {
+                "text" : "All",
+                "type" : "SimpleText"
+              } ]
+            }, {
+              "text" : " identifiers present in the component definition must be used.",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "You can use an empty rule like ",
+              "type" : "SimpleText"
+            }, {
+              "code" : ".politicians {}",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " in order to meet",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "this requirement if you wanted to avoid themeing something.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "These restrictions may seem onerous, but it's a lot like using a record",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "in OCaml: the author of the record gets to decide what the names of the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "fields are, and if someone wants to construct a value of that record,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "they can't just leave out the fields that they don't care about. This",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "means that component authors should think ahead and ask themselves \"what",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "kind of customizability will users of this component want?\" before",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "settling on a set of identifiers and picking which nodes they're",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "attached to.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "There are (plans for) other kinds of ppx transformations other than just",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the identifier re-writing, such as automatically introducing the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "namespacing classnames for you. Those aren't here yet, but they might be",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "soon.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It should be noted that even with the classname hashing, it's still",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "possible to write rules that affect more than you might like. I actually",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "included a number of bugs of this form in the examples so far (!).",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : ".table.politicians td",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " affects ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "every",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " td inside of the table, even",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "tables within tables. So if one of the cells of this table contained",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "another table that was styled differently, we'd run the risk of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "overwriting it. The \"correct\" rule in this case would be to fully",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "qualify the paths to the elements, so ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "table.politicians td",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " would",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "become ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "table.politicians > tbody > tr > td",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "type" : "StrongEmphasis",
+          "content" : [ {
+            "text" : "Pros",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Full access to CSS language including pseudoselectors (like",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : ":nth-child(even)",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ", or ",
+              "type" : "SimpleText"
+            }, {
+              "code" : ":hover",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ")",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Good debugging support in Chrome Devtools",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "No need to worry about identifier clashes because these identifiers",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "are hashed before being used.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "If used in a library, the styles come with the library instead of",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "being another css file that library users need to know about and",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "manage.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "type" : "StrongEmphasis",
+          "content" : [ {
+            "text" : "Cons",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "It's still up to you to make sure that styles aren't too general",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "(this is going to be addresed in further releases of the ppx.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695640724031,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Css",
+      "pageMeta" : {
+        "title" : [ "Css" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "08-css",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Handwritten .css Files",
+        "id" : "handwritten-css-files"
+      }, {
+        "title" : "Vdom.Attr.style",
+        "id" : "vdom-attr-style"
+      }, {
+        "title" : "CSS Ppx",
+        "id" : "css-ppx"
+      }, {
+        "title" : "[~rewrite] flag",
+        "id" : "rewrite-flag"
+      }, {
+        "title" : "Theming through PPX CSS",
+        "id" : "theming-through-ppx-css"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

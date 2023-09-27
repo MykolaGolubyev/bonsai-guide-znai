@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Virtual-dom</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Vdom.Node.t</h1></header>
+<p>Browser interfaces are described by a tree of HTML elements, each of which can have some attributes attached. The virtual_dom library provides an OCaml interface for constructing these trees.This wouldn't be a programming tutorial without a hello world example, which introduces the Vdom.Node.text node constructor. ocaml let hello_world : Vdom.Node.t = Vdom.Node.text &quot;hello world!&quot; The text node will frequently be the &quot;leaf&quot; of a view (there are no &quot;children&quot; of a text node). Let's put some text inside a bulleted list by using some more node constructors: ocaml let bulleted_list : Vdom.Node.t = let open Vdom.Node in div [ h3 [ text &quot;Norwegian Pancakes&quot; ] ; ul [ li [ text &quot;3 eggs&quot; ] ; li [ text &quot;2 cups of milk&quot; ] ; li [ text &quot;1 cup of flour&quot; ] ] ] ;; For the bulleted list, the ul and li functions are required. These correspond to the https://developer.mozilla.org/en-US/docs/Web/HTML/Element/ul ul element and the https://developer.mozilla.org/en-US/docs/Web/HTML/Element/li li element, which MDN helpfully tells us stands for Unordered List and List Item h3 is short for &quot;header level 3&quot;, and is responsible for the larger font in the title text, and div is a https://developer.mozilla.org/en-US/docs/Web/HTML/Element/div &quot;content division&quot; and serves as a useful wrapper for the rest of the content. There is a Vdom.Node.* node constructor function for almost every https://developer.mozilla.org/en-US/docs/Web/HTML/Element dom node. If a constructor is missing, Vdom.Node.create is available to manually specify the tag, but the Virtual_dom maintainers gladly accept contributions back to the main library!</p>
+</article>
+
+<article>
+<header><h1>Vdom.Attr.t</h1></header>
+<p>An optional argument to the Vdom.Node.* constructor functions is a Vdom.Attr.t list . These Attr.t correspond to https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes DOM attributes, https://developer.mozilla.org/en-US/docs/Web/API/Element#properties DOM properties, and https://developer.mozilla.org/en-US/docs/Web/Guide/Events/Event_handlers DOM event_handlers.Attributes can be used to tweak the appearance and behavior of the nodes that they are attached to, for instance, by adding placeholder text to a textbox: ocaml let input_placeholder : Vdom.Node.t = Vdom.Node.input ~attrs:[ Vdom.Attr.placeholder &quot;placeholder text here&quot; ] () ;; Or coloring text with inline css: ocaml let css_gen : Vdom.Node.t = Vdom.Node.span ~attrs:[ Vdom.Attr.style (Css_gen.color (`Name &quot;red&quot;)) ] [ Vdom.Node.text &quot;this text is red&quot; ] ;; ./08-css.md The 8th chapter &quot;css&quot; goes into much more depth on the styling attributes.Finally, there are &quot;event handler&quot; attributes which register functions that are called when a user interacts with the element (like clicking on buttons or typing into a text box). ocaml let clicky : Vdom.Node.t = Vdom.Node.button ~attrs: [ Vdom.Attr.on_click (fun (_evt : mouse_event) -&gt; alert &quot;hello there!&quot;; Ui_effect.Ignore) ] [ Vdom.Node.text &quot;click me!&quot; ] ;; These functions usually receive a browser-level event value (ignored in the above example as _evt ) alongside any useful data extracted from that event. For example, see the following event-handler attributes for mouse-clicks and typing into a textbox: ocaml val Vdom.Attr.on_click : (mouse_event -&gt; unit Vdom.Effect.t) -&gt; Vdom.Attr.t val Vdom.Attr.on_input : (input_event -&gt; string -&gt; unit Vdom.Effect.t) -&gt; Vdom.Attr.t You'll notice that because on_input is used to respond to users typing into a textbox, the handler function is also given a string that holds the current contents of that textbox.The browser-level event-values like mouse_event and input_event are almost always ignored in Bonsai apps.The return type for these event handler functions is unit Vdom.Effect.t , which is the final type that we care about in the Virtual_dom library.</p>
+</article>
+
+<article>
+<header><h1>unit Vdom.Effect.t</h1></header>
+<p>In the example above, the on_click handler function returned Vdom.Effect.Ignore . However, the alert definitely fires when you click on it, so what is this value doing, and why must these event-handlers return values of type unit Vdom.Effect.t in the first place?In reality, values of type unit Vdom.Effect.t are used to schedule work on Bonsai's event-queue. Vdom.Effect.Ignore is the no-op event, and it schedules no work on the event-queue. Vdom.Effect.Many [a; b; c] wraps up multiple events, scheduling them all in order.That leaves us with two more question:How do I get values of type unit Vdom.Effect.t that aren't just Ignore and Many Why would I want to use the Bonsai event queue anyway? Both of which will be answered in ./03-state.md Bonsai Guide Part 3: State. unit Vdom.Effect.t is actually an alias for unit Ui_effect.t . They are the same type, and it's merely re-exported from the Vdom library as a convenience. If you see a unit Ui_effect.t (either in another library, or from merlin), know that it is the same thing as unit Vdom.Effect.t .</p>
+</article>
+
+<article>
+<header><h1>The Underlying Machinery</h1></header>
+<p>A virtual-DOM is an immutable tree of immutable UI elements that represents the view of the application at a point in time. This is in contrast to https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model the DOM (Document Object Model), which is a mutable tree of mutable UI elements. The term &quot;virtual-DOM&quot; is not unique to Bonsai. Many other UI libraries like https://reactjs.org/docs/faq-internals.html React, https://github.com/elm/virtual-DOM Elm, and https://vuejs.org/v2/guide/render-function.html#The-Virtual-DOM Vue have their own &quot;virtual-DOM&quot; libraries that all share similar goals. With the (not-virtual) DOM, the program mutates the tree of UI components in order to update the view, but with the virtual-DOM, the program produces a new tree every time the view changes. While this may appear to be a performance nightmare, many of the tools that we use to reduce duplication of work in regular programs also work well to prevent re-computing parts of this sub-view.The Virtual_dom library also contains functions that diff two versions of a virtual-dom tree. The diff can be used as instructions for mutating the DOM to reflect the contents of the &quot;next&quot; virtual-DOM node. These functions are quite fundamental, but Bonsai handles the calls to these functions, so application developers are solely concerned with producing new vdom trees.Let's continue to ./02-dynamism.md Bonsai Guide Part 2: Dynamism.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "Browser interfaces are described by a tree of HTML ",
+        "type" : "SimpleText"
+      }, {
+        "type" : "Emphasis",
+        "content" : [ {
+          "text" : "elements",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "text" : ", each of",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "which can have some ",
+        "type" : "SimpleText"
+      }, {
+        "type" : "Emphasis",
+        "content" : [ {
+          "text" : "attributes",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "text" : " attached. The ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "virtual_dom",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " library",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "provides an OCaml interface for constructing these trees.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "id" : "vdom-node-t",
+      "title" : "Vdom.Node.t",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This wouldn't be a programming tutorial without a hello world example,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "which introduces the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.text",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " node constructor.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let hello_world : Vdom.Node.t = Vdom.Node.text \"hello world!\"\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#hello_world",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The text node will frequently be the \"leaf\" of a view (there are no",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "\"children\" of a text node). Let's put some text inside a bulleted list",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "by using some more node constructors:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let bulleted_list : Vdom.Node.t =\n  let open Vdom.Node in\n  div\n    [ h3 [ text \"Norwegian Pancakes\" ]\n    ; ul\n        [ li [ text \"3 eggs\" ]\n        ; li [ text \"2 cups of milk\" ]\n        ; li [ text \"1 cup of flour\" ]\n        ]\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#bulleted_list",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "For the bulleted list, the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "ul",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "li",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " functions are required. These",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "correspond to the ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/ul",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "ul",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "element",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and the ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/li",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "li",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "element",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ",",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "which MDN helpfully tells us stands for ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "Unordered List",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "List Item",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "h3",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is short for \"header level 3\", and is responsible for the larger",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "font in the title text, and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "div",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is a ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/HTML/Element/div",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "\"content",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "division\"",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and serves as a useful wrapper for the rest of the content.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "There is a ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Vdom.Node.*",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " node constructor function for ",
+            "type" : "SimpleText"
+          }, {
+            "type" : "Emphasis",
+            "content" : [ {
+              "text" : "almost",
+              "type" : "SimpleText"
+            } ]
+          }, {
+            "text" : " every",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "url" : "https://developer.mozilla.org/en-US/docs/Web/HTML/Element",
+            "isFile" : false,
+            "type" : "Link",
+            "content" : [ {
+              "text" : "dom node",
+              "type" : "SimpleText"
+            } ]
+          }, {
+            "text" : ".",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "If a constructor is missing, ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Vdom.Node.create",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " is available to manually",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "specify the tag, but the ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Virtual_dom",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " maintainers gladly accept",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "contributions back to the main library!",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      } ]
+    }, {
+      "id" : "vdom-attr-t",
+      "title" : "Vdom.Attr.t",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "An optional argument to the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.*",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " constructor functions is a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Attr.t list",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". These ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Attr.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " correspond to ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/HTML/Attributes",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "DOM",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "attributes",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ",",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/API/Element#properties",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "DOM",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "properties",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ",",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/Guide/Events/Event_handlers",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "DOM",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "event_handlers",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Attributes can be used to tweak the appearance and behavior of the nodes",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "that they are attached to, for instance, by adding placeholder text to a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "textbox:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let input_placeholder : Vdom.Node.t =\n  Vdom.Node.input ~attrs:[ Vdom.Attr.placeholder \"placeholder text here\" ] ()\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#input_placeholder",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Or coloring text with inline css:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let css_gen : Vdom.Node.t =\n  Vdom.Node.span\n    ~attrs:[ Vdom.Attr.style (Css_gen.color (`Name \"red\")) ]\n    [ Vdom.Node.text \"this text is red\" ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#css_gen",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "url" : "/bonsai/guide/08-css",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "The 8th chapter \"css\"",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " goes into much more depth on the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "styling attributes.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Finally, there are \"event handler\" attributes which register functions",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "that are called when a user interacts with the element (like clicking on",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "buttons or typing into a text box).",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let clicky : Vdom.Node.t =\n  Vdom.Node.button\n    ~attrs:\n      [ Vdom.Attr.on_click (fun (_evt : mouse_event) ->\n          alert \"hello there!\";\n          Ui_effect.Ignore)\n      ]\n    [ Vdom.Node.text \"click me!\" ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#clicky_button",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "These functions usually receive a browser-level event value (ignored in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the above example as ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "_evt",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ") alongside any useful data extracted from",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "that event. For example, see the following event-handler attributes for",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "mouse-clicks and typing into a textbox:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val Vdom.Attr.on_click : (mouse_event -> unit Vdom.Effect.t) -> \n  Vdom.Attr.t val Vdom.Attr.on_input : (input_event -> string -> unit Vdom.Effect.t) -> Vdom.Attr.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "You'll notice that because ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_input",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is used to respond to users typing",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "into a textbox, the handler function is also given a string that holds",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the current contents of that textbox.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The browser-level event-values like ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "mouse_event",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "input_event",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "almost always ignored in Bonsai apps.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The return type for these event handler functions is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "unit Vdom.Effect.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which is the final type that we care about in the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Virtual_dom",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "unit-vdom-effect-t",
+      "title" : "unit Vdom.Effect.t",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In the example above, the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_click",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " handler function returned",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Effect.Ignore",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". However, the alert definitely fires when you click",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "on it, so what is this value doing, and why must these event-handlers",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "return values of type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "unit Vdom.Effect.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " in the first place?",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In reality, values of type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "unit Vdom.Effect.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " are used to schedule",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "work on Bonsai's event-queue. ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Effect.Ignore",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is the no-op event,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and it schedules no work on the event-queue.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Effect.Many [a; b; c]",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " wraps up multiple events, scheduling them",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "all in order.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "That leaves us with two more question:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "How do I get values of type ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "unit Vdom.Effect.t",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " that aren't just",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "Ignore",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " and ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Many",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Why would I want to use the Bonsai event queue anyway?",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Both of which will be answered in ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/03-state",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "Bonsai Guide Part 3:",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "State",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "unit Vdom.Effect.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " is actually an alias for ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "unit Ui_effect.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ". They",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "are the same type, and it's merely re-exported from the ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Vdom",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " library",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "as a convenience. If you see a ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "unit Ui_effect.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " (either in another",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "library, or from merlin), know that it is the same thing as",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "unit Vdom.Effect.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ".",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      } ]
+    }, {
+      "id" : "the-underlying-machinery",
+      "title" : "The Underlying Machinery",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "A virtual-DOM is an immutable tree of immutable UI elements that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "represents the view of the application at a point in time. This is in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "contrast to ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "the DOM (Document Object",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "Model)",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ",",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "which is a mutable tree of mutable UI elements.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The term \"virtual-DOM\" is not unique to Bonsai. Many other UI libraries",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "like ",
+            "type" : "SimpleText"
+          }, {
+            "url" : "https://reactjs.org/docs/faq-internals.html",
+            "isFile" : false,
+            "type" : "Link",
+            "content" : [ {
+              "text" : "React",
+              "type" : "SimpleText"
+            } ]
+          }, {
+            "text" : ",",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "url" : "https://github.com/elm/virtual-DOM",
+            "isFile" : false,
+            "type" : "Link",
+            "content" : [ {
+              "text" : "Elm",
+              "type" : "SimpleText"
+            } ]
+          }, {
+            "text" : ", and",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "url" : "https://vuejs.org/v2/guide/render-function.html#The-Virtual-DOM",
+            "isFile" : false,
+            "type" : "Link",
+            "content" : [ {
+              "text" : "Vue",
+              "type" : "SimpleText"
+            } ]
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "have their own \"virtual-DOM\" libraries that all share similar goals.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "With the (not-virtual) DOM, the program mutates the tree of UI",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "components in order to update the view, but with the virtual-DOM, the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "program produces a new tree every time the view changes. While this may",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "appear to be a performance nightmare, many of the tools that we use to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "reduce duplication of work in regular programs also work well to prevent",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "re-computing parts of this sub-view.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Virtual_dom",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library also contains functions that diff two versions",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of a virtual-dom tree. The diff can be used as instructions for mutating",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the DOM to reflect the contents of the \"next\" virtual-DOM node. These",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "functions are quite fundamental, but Bonsai handles the calls to these",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "functions, so application developers are solely concerned with producing",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "new vdom trees.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Let's continue to ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/02-dynamism",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "Bonsai Guide Part 2: Dynamism",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814630493,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Virtual-dom",
+      "pageMeta" : {
+        "title" : [ "Virtual-dom" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "01-virtual_dom",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Vdom.Node.t",
+        "id" : "vdom-node-t"
+      }, {
+        "title" : "Vdom.Attr.t",
+        "id" : "vdom-attr-t"
+      }, {
+        "title" : "unit Vdom.Effect.t",
+        "id" : "unit-vdom-effect-t"
+      }, {
+        "title" : "The Underlying Machinery",
+        "id" : "the-underlying-machinery"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

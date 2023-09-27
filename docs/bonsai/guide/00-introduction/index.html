@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Introduction</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Web Apps at 10,000 Feet</h1></header>
+<p>This guide will teach you how to build user interfaces in the browser using several libraries, primarily Bonsai and Virtual_dom . Together, these libraries allow you to build applications in a functional style instead of the imperative style encouraged by the browser's API.In this guide we aim to explain how to use Bonsai, and, to a lesser degree, how Bonsai works under the hood. We hope that the latter will equip you with the knowledge necessary to tune the performance of your applications.The browser understands three languages: Javascript, HTML, CSS. Jane Street programmers only understand one language: OCaml. Thus, we've made it possible to write all three of the browser languages using OCaml. js_of_ocaml is an OCaml-to-Javascript compiler. virtual_dom is a library for building values that represent a chunk of HTML. css_gen is a library for writing CSS styles in a type safe manner. The CSS situation is a little more nuanced, since we actually recommend writing CSS directly using ppx_css .A user interface is a function from data to view. In types: ocaml (* Virtual_dom.Vdom.Node.t represents your application's view *) open Virtual_dom val ui : Your_input_type_here.t -&gt; Vdom.Node.t It's easy to write composable views with such functions, since all you need to return is a plain old OCaml value. A small amount of boilerplate can turn this function into a simple web app that continuously displays the result of the function.Of course, this is a huge simplification; in a real app, you usually want:Interactivity, so the user can click on, type into, and navigate through things. Incrementality, so that large amounts of highly dynamically data can be displayed without the interface lagging. Bonsai provides these features while still encouraging the composition and abstraction properties of regular OCaml code. Bonsai wants you to forget it is there. The signature of a Bonsai app looks a bit like this: ocaml open Bonsai_web val ui : Your_input_type_here.t Value.t -&gt; Vdom.Node.t Computation.t It's just like before, except the input is wrapped with Value.t and the output is wrapped with Computation.t . While there is slightly more friction, writing re-usable UI components is just as easy. In addition, we've expanded the kinds of components you can write, since Computation.t encapsulates incremental state machines, which is how interactivity is added to an interface.Both these types are covered in detail in chapters ./02-dynamism.md 2 and ./03-state.md 3.</p>
+</article>
+
+<article>
+<header><h1>The Underlying Machinery</h1></header>
+<p>The incrementality in Bonsai comes from the Incremental library. When a web page loads, Bonsai compiles the top-level Vdom.Node.t Computation.t into something akin to Vdom.Node.t Incr.t . Then the Incr_dom library handles running the main loop to keep the incremental graph stabilized (i.e. up-to-date).The Vdom.Node.t representing the current view gets put onto the screen via a diff-and-patch process. The virtual_dom library always keeps track of the previous Vdom.Node.t that it told the browser to display. Whenever we request a new Vdom.Node.t to be displayed on the screen, the library first compares it to the previous view to see what changed, and then it applies just those changes to what the browser is displaying.Details regarding Incremental, and the virtual-dom diff-and-patch strategy are abstracted away so you'll rarely need to think about them. However, a good cost model will help you to avoid or debug performance pitfalls. Throughout the rest of this guide, we will endeavor to provide such a cost model.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "This guide will teach you how to build user interfaces in the browser",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "using several libraries, primarily ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Bonsai",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " and ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Virtual_dom",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ". Together,",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "these libraries allow you to build applications in a functional style",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "instead of the imperative style encouraged by the browser's API.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "In this guide we aim to explain how to use Bonsai, and, to a lesser",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "degree, how Bonsai works under the hood. We hope that the latter will",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "equip you with the knowledge necessary to tune the performance of your",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "applications.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "id" : "web-apps-at-10000-feet",
+      "title" : "Web Apps at 10,000 Feet",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The browser understands three languages: Javascript, HTML, CSS. Jane",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Street programmers only understand one language: OCaml. Thus, we've made",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "it possible to write all three of the browser languages using OCaml.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : true,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "js_of_ocaml",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " is an OCaml-to-Javascript compiler.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "virtual_dom",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " is a library for building values that represent a",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "chunk of HTML.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "css_gen",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " is a library for writing CSS styles in a type safe manner.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The CSS situation is a little more nuanced, since we actually recommend",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "writing CSS directly using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "ppx_css",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "A user interface is a function from ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "data",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " to ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "view",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ". In types:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "(* Virtual_dom.Vdom.Node.t represents your application's view *)\nopen Virtual_dom\n\nval ui : Your_input_type_here.t -> Vdom.Node.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It's easy to write composable views with such functions, since all you",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "need to return is a plain old OCaml value. A small amount of boilerplate",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "can turn this function into a simple web app that continuously displays",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the result of the function.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Of course, this is a huge simplification; in a real app, you usually",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "want:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : true,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "type" : "Emphasis",
+              "content" : [ {
+                "text" : "Interactivity",
+                "type" : "SimpleText"
+              } ]
+            }, {
+              "text" : ", so the user can click on, type into, and navigate",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "through things.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "type" : "Emphasis",
+              "content" : [ {
+                "text" : "Incrementality",
+                "type" : "SimpleText"
+              } ]
+            }, {
+              "text" : ", so that large amounts of highly dynamically data",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "can be displayed without the interface lagging.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Bonsai provides these features while still encouraging the composition",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and abstraction properties of regular OCaml code. Bonsai wants you to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "forget it is there. The signature of a Bonsai app looks a bit like this:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "open Bonsai_web\n\nval ui : Your_input_type_here.t Value.t -> Vdom.Node.t Computation.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It's just like before, except the input is wrapped with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the output is wrapped with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". While there is slightly more",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "friction, writing re-usable UI components is just as easy. In addition,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "we've expanded the kinds of components you can write, since",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " encapsulates incremental state machines, which is how",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "interactivity is added to an interface.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Both these types are covered in detail in chapters ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/02-dynamism",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "2",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/03-state",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "3",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "the-underlying-machinery",
+      "title" : "The Underlying Machinery",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The incrementality in Bonsai comes from the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Incremental",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library. When",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "a web page loads, Bonsai compiles the top-level",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Node.t Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " into something akin to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.t Incr.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Then the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Incr_dom",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library handles running the main loop to keep the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "incremental graph stabilized (i.e. up-to-date).",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " representing the current view gets put onto the screen",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "via a diff-and-patch process. The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "virtual_dom",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library always keeps",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "track of the previous ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " that it told the browser to display.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Whenever we request a ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "new",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to be displayed on the screen,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the library first compares it to the previous view to see what changed,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and then it applies ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "just those changes",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " to what the browser is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "displaying.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Details regarding Incremental, and the virtual-dom diff-and-patch",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "strategy are abstracted away so you'll rarely need to think about them.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "However, a good cost model will help you to avoid or debug performance",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "pitfalls. Throughout the rest of this guide, we will endeavor to provide",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "such a cost model.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814630491,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Introduction",
+      "pageMeta" : {
+        "title" : [ "Introduction" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "00-introduction",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Web Apps at 10,000 Feet",
+        "id" : "web-apps-at-10000-feet"
+      }, {
+        "title" : "The Underlying Machinery",
+        "id" : "the-underlying-machinery"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

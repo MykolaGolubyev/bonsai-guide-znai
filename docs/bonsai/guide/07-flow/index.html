@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Flow</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Components as DAGs</h1></header>
+<p>This chapter of the guide is a collection of smaller topics that are valuable for structuring components.One of the biggest differences between Bonsai and other virtual-dom based UI frameworks (such as React, Vue, or Elm) is that Bonsai structures the composition of UI components as a Directed Acyclic Graph instead of as a tree.What this means in practice is that the output of one component can be fed as input to another component.To illustrate this, we'll build a textbox component whose placeholder text is specified dynamically. This textbox component is so similar to the one constructed in the ./03-state.md state chapter that the diff between that version and the new one is shown below for convenience. diff -let textbox = +let textbox ~placeholder = let%sub state, set_state = Bonsai.state (module String) ~default_model:&quot;&quot; in (let%arr state = state and set_state = set_state + and placeholder = placeholder in let view = Vdom.Node.input ~attr:(Vdom.Attr.many [ Vdom.Attr.value_prop state ; Vdom.Attr.on_input (fun _ new_text -&gt; set_state new_text) + ; Vdom.Attr.placeholder placeholder ]) () in state, view) ;; And a basic usage of the new component (with a constant placeholder) ocaml let textbox_with_placeholder = textbox ~placeholder:(Value.return &quot;the placeholder&quot;) And because of the graph-like structure of a Bonsai app, we can trivially chain two textboxes together so that the contents of one of the output of one textbox is used as the placeholder for the next. ocaml let textbox_chaining = let%sub a_contents, a_view = textbox ~placeholder:(Value.return &quot;&quot;) in let%sub _, b_view = textbox ~placeholder:a_contents in let%arr a_view = a_view and b_view = b_view in let style = Vdom.Attr.style (Css_gen.display `Inline_grid) in Vdom.Node.div ~attrs:[ style ] [ a_view; b_view ] ;; Clearly, chaining together two textboxes to set the placeholder text isn't particularly useful (the examples are small though!), but in real applications, this kind of component dependency structuring is valuable in a myriad of ways:The output of a &quot;tab-selector&quot; component could include the view for a tab-bar, but also a value for the currently selected tab. Then other components could read that value and respond accordingly. A form could dynamically change its contents based on the values of previously filled out form contents. At the top of an application component graph, a &quot;light mode or dark mode&quot; checkbox component could be added, and the current value (either light or dark) could be passed down to downstream components to influence the way that they display.</p>
+</article>
+
+<article>
+<header><h1>match%sub</h1></header>
+<p>let%sub should be familiar to you by now, but there's actually a more powerful form of variable substitution which permits a limited form of dynamism, match expressions! With match%sub , a 'a Value.t is matched on, and any bindings in the match arm are projected out into their Value.t form. Let's look at what that means in practice!In the following example, we'll avoid building the 2nd textbox if the first textbox is either empty or only contains whitespace. ocaml let textbox_matching = let%sub a_contents, a_view = textbox ~placeholder:(Value.return &quot;&quot;) in let%sub a_contents = let%arr s = a_contents in let s = String.strip s in if String.is_empty s then None else Some s in match%sub a_contents with | None -&gt; let%arr a_view = a_view in let message = Vdom.Node.div [ Vdom.Node.text &quot;&lt;a is empty&gt;&quot; ] in Vdom.Node.div [ a_view; message ] | Some placeholder -&gt; let%sub _, b_view = textbox ~placeholder in let%arr a_view = a_view and b_view = b_view in let style = Vdom.Attr.style (Css_gen.display `Inline_grid) in Vdom.Node.div ~attrs:[ style ] [ a_view; b_view ] ;; There are a few details to note about some of the types up aboveThe matched value has type 'a Value.t The values produced by each of the match-arms must be of type 'b Computation.t The overall type of the match%sub expression has type 'b Computation.t Any identifiers bound during matching (in the above example, this is just placeholder ) are available in Value.t form. It is important to know that at any point in time, only one of the arms in the pattern match is active, so the components in the not-matched arms are not being computed.In addition to match%sub , if%sub also exists, with the exact same semantics, but specialized for booleans.</p>
+</article>
+
+<article>
+<header><h1>Bonsai.assoc</h1></header>
+<p>Up until now, Bonsai hasn't had any real tools for dealing with dynamically sized collections of components. Sure, you could manually re-use a text-box component twice, but if the number of distinct components is determined at runtime, writing out a bunch of let%sub won't cut it.That's where Bonsai.assoc comes in. Let's start by looking at its type signature: ocaml val assoc : ('key, 'cmp) comparator -&gt; ('key, 'data, 'cmp) Map.t Value.t -&gt; f:('key Value.t -&gt; 'data Value.t -&gt; 'result Computation.t) -&gt; ('key, 'result, 'cmp) Map.t Computation.t Breaking the parts of the signature down one-by-one we have ('key, 'cmp) comparator : A comparator is required; this is typically just (module Int) or (module My_type) where the type is comparable, and has the sexp functions defined. ('key, 'data, 'cmp) Map.t Value.t : A dynamic map from 'key to 'data . a named function f with type 'key Value.t -&gt; 'data Value.t -&gt; 'result Computation.t ; this function will be called with every key-value pair in the map, and produces a computation containing 'result . Finally, the return value of assoc is ('key, 'result, 'cmp) Map.t Computation.t , a map from the same key as the input to the 'result produced in the f function. This type signature is remarkably close to the regular OCaml function Map.mapi , which has this type signature: ocaml val mapi : ('key, 'data, 'cmp) Map.t -&gt; f:(key:'key -&gt; data:'data -&gt; 'result) -&gt; ('key, 'result, 'cmp) Map.t But of course the Bonsai version has a bunch of Value.t and Computation.t in it's type signature, so what are those types giving us?The first benefit to assoc is that the computation inside of f is only evaluated once per key/value pair, after which any updates to the data travel through the regular bonsai Value graph optimization. This means that if the input map is 100,000 elements large, but only one of the keys has data that is changing frequently, only the one component for that key will be involved in recomputing the eventual result of the overall function.The other benefit to using assoc is apparent from looking at the type of the function: the f function returns a Computation.t , which means that every key/value pair in the output map is its own component, each with it's own independent state!For this example, we'll re-use the &quot;counter&quot; component defined in the last section of the ./03-state.md state chapter, but this time, there'll be a bunch of them! ocaml let multiple_counters (input : unit String.Map.t Value.t) = let%sub counters = Bonsai.assoc (module String) input ~f:(fun _key (_ : unit Value.t) -&gt; State_examples.counter_state_machine) in let%arr counters = counters in Vdom.Node.table (counters |&gt; Map.to_alist |&gt; List.map ~f:(fun (key, vdom) -&gt; let open Vdom.Node in let name = td [ Vdom.Node.text key ] in let counter = td [ vdom ] in Vdom.Node.tr [ name; counter ])) ;; and to start out with we'll use a constant map as an input to the component: ocaml let multiple_counters_constant = multiple_counters ([ &quot;hello&quot;, (); &quot;there&quot;, () ] |&gt; Map.of_alist_exn (module String) |&gt; Value.return) ;; and while this does show off how to associate a component across a map, using Value.return makes it hard to see the &quot;dynamic&quot; aspect. So let's build a dynamically editable map! This final code example is less about Bonsai.assoc and more about integrating concepts from the rest of the bonsai guide: Bonsai.state_machine tracks and edits a map for the counters Bonsai's Forms library is used to interact with the state-machine to add new entries assoc builds up the table of counters from the map inside state-machine. ocaml module Model = struct type t = unit String.Map.t [@@deriving sexp, equal] let default = String.Map.of_alist_exn [ &quot;Dave&quot;, (); &quot;Jill&quot;, () ] end module Action = struct type t = | Add of string | Remove of string [@@deriving sexp_of] end let people = Bonsai.state_machine0 () ~sexp_of_model:[%sexp_of: Model.t] ~equal:[%equal: Model.t] ~sexp_of_action:[%sexp_of: Action.t] ~default_model:Model.default ~apply_action:(fun (_ : _ Bonsai.Apply_action_context.t) model action -&gt; match action with | Add name -&gt; Map.set model ~key:name ~data:() | Remove name -&gt; Map.remove model name) ;; let add_new_person_form ~inject_add_person = let%sub form = Form.Elements.Textbox.string () in let%arr form = form and inject_add_person = inject_add_person in let on_submit name = Vdom.Effect.Many [ Form.set form &quot;&quot;; inject_add_person name ] in form |&gt; Form.label &quot;name&quot; |&gt; Form.validate ~f:(fun name -&gt; if String.for_all name ~f:Char.is_whitespace then Error (Error.of_string &quot;name must not be empty&quot;) else Ok ()) |&gt; Form.view_as_vdom ~on_submit:(Form.Submit.create ~f:on_submit ()) ;; let people_table people ~inject_remove_person = Bonsai.assoc (module String) people ~f:(fun name (_ : unit Value.t) -&gt; let%sub counter = State_examples.counter_state_machine in let%arr counter = counter and name = name and inject_remove_person = inject_remove_person in let open Vdom.Node in let remove_person = td [ button ~attrs:[ Vdom.Attr.on_click (fun _ -&gt; inject_remove_person name) ] [ text &quot;x&quot; ] ] in let name = td [ text name ] in let counter = td [ counter ] in tr [ name; counter; remove_person ]) ;; let kudo_tracker = let%sub people, inject_action = people in let%sub form = let%sub inject_add_person = let%arr inject_action = inject_action in fun name -&gt; inject_action (Add name) in add_new_person_form ~inject_add_person in let%sub people_table = let%sub inject_remove_person = let%arr inject_action = inject_action in fun name -&gt; inject_action (Remove name) in people_table people ~inject_remove_person in let%arr people_table = people_table and form = form in let open Vdom.Node in div [ h2 [ text &quot;kudos tracker&quot; ] ; table [ thead [ tr [ th [ text &quot;Name&quot; ]; th [ text &quot;# Kudos&quot; ]; th [ text &quot;Remove&quot; ] ] ] ; tbody (Map.data people_table) ] ; h2 [ text &quot;Add Person&quot; ] ; form ] ;;</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "This chapter of the guide is a collection of smaller topics that are",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "valuable for structuring components.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "id" : "components-as-dags",
+      "title" : "Components as DAGs",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "One of the biggest differences between Bonsai and other virtual-dom",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "based UI frameworks (such as React, Vue, or Elm) is that Bonsai",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "structures the composition of UI components as a Directed Acyclic Graph",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "instead of as a tree.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "What this means in practice is that the output of one component can be",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "fed as input to another component.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "To illustrate this, we'll build a textbox component whose placeholder",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "text is specified dynamically. This textbox component is so similar to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the one constructed in the ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/03-state",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "state chapter",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " that the diff",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "between that version and the new one is shown below for convenience.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "diff",
+        "snippet" : "-let textbox =\n+let textbox ~placeholder =\n   let%sub state, set_state = Bonsai.state (module String) ~default_model:\"\" in\n   (let%arr state = state\n      and set_state = set_state\n+     and placeholder = placeholder in\n      let view =\n        Vdom.Node.input\n          ~attr:(Vdom.Attr.many [ Vdom.Attr.value_prop state\n          ; Vdom.Attr.on_input (fun _ new_text -> set_state new_text)\n+         ; Vdom.Attr.placeholder placeholder\n          ])\n          ()\n      in\n      state, view)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "And a basic usage of the new component (with a constant placeholder)",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let textbox_with_placeholder = textbox ~placeholder:(Value.return \"the placeholder\")\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#textbox_with_placeholder",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "And because of the graph-like structure of a Bonsai app, we can",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "trivially chain two textboxes together so that the contents of one of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the output of one textbox is used as the placeholder for the next.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let textbox_chaining =\n  let%sub a_contents, a_view = textbox ~placeholder:(Value.return \"\") in\n  let%sub _, b_view = textbox ~placeholder:a_contents in\n  let%arr a_view = a_view\n  and b_view = b_view in\n  let style = Vdom.Attr.style (Css_gen.display `Inline_grid) in\n  Vdom.Node.div ~attrs:[ style ] [ a_view; b_view ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#textbox_chaining",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Clearly, chaining together two textboxes to set the placeholder text",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "isn't particularly useful (the examples are small though!), but in real",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "applications, this kind of component dependency structuring is valuable",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "in a myriad of ways:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : true,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "The output of a \"tab-selector\" component could include the view for",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "a tab-bar, but also a value for the currently selected tab. Then",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "other components could read that value and respond accordingly.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "A form could dynamically change its contents based on the values of",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "previously filled out form contents.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "At the top of an application component graph, a \"light mode or dark",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "mode\" checkbox component could be added, and the current value",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "(either light or dark) could be passed down to downstream components",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "to influence the way that they display.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      } ]
+    }, {
+      "id" : "matchsub",
+      "title" : "match%sub",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " should be familiar to you by now, but there's actually a more",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "powerful form of variable substitution which permits a limited form of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "dynamism, match expressions! With ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "match%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is matched",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "on, and any bindings in the match arm are projected out into their",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " form. Let's look at what that means in practice!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In the following example, we'll avoid building the 2nd textbox if the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "first textbox is either empty or only contains whitespace.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let textbox_matching =\n  let%sub a_contents, a_view = textbox ~placeholder:(Value.return \"\") in\n  let%sub a_contents =\n    let%arr s = a_contents in\n    let s = String.strip s in\n    if String.is_empty s then None else Some s\n  in\n  match%sub a_contents with\n  | None ->\n    let%arr a_view = a_view in\n    let message = Vdom.Node.div [ Vdom.Node.text \"<a is empty>\" ] in\n    Vdom.Node.div [ a_view; message ]\n  | Some placeholder ->\n    let%sub _, b_view = textbox ~placeholder in\n    let%arr a_view = a_view\n    and b_view = b_view in\n    let style = Vdom.Attr.style (Css_gen.display `Inline_grid) in\n    Vdom.Node.div ~attrs:[ style ] [ a_view; b_view ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#textbox_chaining_match",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "There are a few details to note about some of the types up above",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "The matched value has type ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "'a Value.t",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "The values produced by each of the match-arms must be of type",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "'b Computation.t",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "The overall type of the ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "match%sub",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " expression has type",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "'b Computation.t",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Any identifiers bound during matching (in the above example, this is",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "just ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "placeholder",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ") are available in ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Value.t",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " form.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It is important to know that at any point in time, only one of the arms",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "in the pattern match is active, so the components in the not-matched",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "arms are not being computed.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In addition to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "match%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "if%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " also exists, with the exact same",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "semantics, but specialized for booleans.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "bonsai-assoc",
+      "title" : "Bonsai.assoc",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Up until now, Bonsai hasn't had any real tools for dealing with",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "dynamically sized collections of components. Sure, you could manually",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "re-use a text-box component twice, but if the number of distinct",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "components is determined at runtime, writing out a bunch of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "won't cut it.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "That's where ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai.assoc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " comes in. Let's start by looking at its type",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "signature:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val assoc\n  :  ('key, 'cmp) comparator\n  -> ('key, 'data, 'cmp) Map.t Value.t\n  -> f:('key Value.t -> 'data Value.t -> 'result Computation.t)\n  -> ('key, 'result, 'cmp) Map.t Computation.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Breaking the parts of the signature down one-by-one we have",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "('key, 'cmp) comparator",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ": A comparator is required; this is",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "typically just ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "(module Int)",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " or ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "(module My_type)",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " where the type",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "is comparable, and has the sexp functions defined.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "('key, 'data, 'cmp) Map.t Value.t",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ": A dynamic map from ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "'key",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " to",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "'data",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ".",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "a named function ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "f",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " with type",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "'key Value.t -> 'data Value.t -> 'result    Computation.t",
+              "type" : "InlinedCode"
+            }, {
+              "text" : "; this",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "function will be called with every key-value pair in the map, and",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "produces a computation containing ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "'result",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ".",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Finally, the return value of ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "assoc",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " is",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "('key, 'result, 'cmp) Map.t    Computation.t",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ", a map from the same",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "key as the input to the ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "'result",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " produced in the ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "f",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " function.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This type signature is remarkably close to the regular OCaml function",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Map.mapi",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which has this type signature:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val mapi\n:  ('key, 'data, 'cmp) Map.t\n-> f:(key:'key -> data:'data -> 'result)\n-> ('key, 'result, 'cmp) Map.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "But of course the Bonsai version has a bunch of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " in it's type signature, so what are those types giving",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "us?",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The first benefit to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "assoc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is that the computation inside of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "f",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "only evaluated once per key/value pair, after which any updates to the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "data",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " travel through the regular bonsai ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " graph optimization.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "This means that if the input map is 100,000 elements large, but only one",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of the keys has data that is changing frequently, only the one component",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "for that key will be involved in recomputing the eventual result of the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "overall function.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The other benefit to using assoc is apparent from looking at the type of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the function: the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "f",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " function returns a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which means",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "that every key/value pair in the output map is its own component, each",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "with it's own independent state!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "For this example, we'll re-use the \"counter\" component defined in the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "last section of the ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/03-state",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "state chapter",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ", but this time,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "there'll be a bunch of them!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let multiple_counters (input : unit String.Map.t Value.t) =\n  let%sub counters =\n    Bonsai.assoc\n      (module String)\n      input\n      ~f:(fun _key (_ : unit Value.t) -> State_examples.counter_state_machine)\n  in\n  let%arr counters = counters in\n  Vdom.Node.table\n    (counters\n     |> Map.to_alist\n     |> List.map ~f:(fun (key, vdom) ->\n       let open Vdom.Node in\n       let name = td [ Vdom.Node.text key ] in\n       let counter = td [ vdom ] in\n       Vdom.Node.tr [ name; counter ]))\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "and to start out with we'll use a constant map as an input to the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "component:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let multiple_counters_constant =\n  multiple_counters\n    ([ \"hello\", (); \"there\", () ] |> Map.of_alist_exn (module String) |> Value.return)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#multiple_counters_constant",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "and while this does show off how to associate a component across a map,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.return",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " makes it hard to see the \"dynamic\" aspect. So let's",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "build a dynamically editable map!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "This final code example is less about ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Bonsai.assoc",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and more about",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "integrating concepts from the rest of the bonsai guide:",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "bulletMarker" : "-",
+          "tight" : true,
+          "type" : "BulletList",
+          "content" : [ {
+            "type" : "ListItem",
+            "content" : [ {
+              "type" : "Paragraph",
+              "content" : [ {
+                "code" : "Bonsai.state_machine",
+                "type" : "InlinedCode"
+              }, {
+                "text" : " tracks and edits a map for the counters",
+                "type" : "SimpleText"
+              } ]
+            } ]
+          }, {
+            "type" : "ListItem",
+            "content" : [ {
+              "type" : "Paragraph",
+              "content" : [ {
+                "text" : "Bonsai's Forms library is used to interact with the state-machine to",
+                "type" : "SimpleText"
+              }, {
+                "type" : "SoftLineBreak"
+              }, {
+                "text" : "add new entries",
+                "type" : "SimpleText"
+              } ]
+            } ]
+          }, {
+            "type" : "ListItem",
+            "content" : [ {
+              "type" : "Paragraph",
+              "content" : [ {
+                "code" : "assoc",
+                "type" : "InlinedCode"
+              }, {
+                "text" : " builds up the table of counters from the map inside",
+                "type" : "SimpleText"
+              }, {
+                "type" : "SoftLineBreak"
+              }, {
+                "text" : "state-machine.",
+                "type" : "SimpleText"
+              } ]
+            } ]
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module Model = struct\n  type t = unit String.Map.t [@@deriving sexp, equal]\n\n  let default = String.Map.of_alist_exn [ \"Dave\", (); \"Jill\", () ]\nend\n\nmodule Action = struct\n  type t =\n    | Add of string\n    | Remove of string\n  [@@deriving sexp_of]\nend\n\nlet people =\n  Bonsai.state_machine0\n    ()\n    ~sexp_of_model:[%sexp_of: Model.t]\n    ~equal:[%equal: Model.t]\n    ~sexp_of_action:[%sexp_of: Action.t]\n    ~default_model:Model.default\n    ~apply_action:(fun (_ : _ Bonsai.Apply_action_context.t) model action ->\n      match action with\n      | Add name -> Map.set model ~key:name ~data:()\n      | Remove name -> Map.remove model name)\n;;\n\nlet add_new_person_form ~inject_add_person =\n  let%sub form = Form.Elements.Textbox.string () in\n  let%arr form = form\n  and inject_add_person = inject_add_person in\n  let on_submit name = Vdom.Effect.Many [ Form.set form \"\"; inject_add_person name ] in\n  form\n  |> Form.label \"name\"\n  |> Form.validate ~f:(fun name ->\n    if String.for_all name ~f:Char.is_whitespace\n    then Error (Error.of_string \"name must not be empty\")\n    else Ok ())\n  |> Form.view_as_vdom ~on_submit:(Form.Submit.create ~f:on_submit ())\n;;\n\nlet people_table people ~inject_remove_person =\n  Bonsai.assoc\n    (module String)\n    people\n    ~f:(fun name (_ : unit Value.t) ->\n      let%sub counter = State_examples.counter_state_machine in\n      let%arr counter = counter\n      and name = name\n      and inject_remove_person = inject_remove_person in\n      let open Vdom.Node in\n      let remove_person =\n        td\n          [ button\n              ~attrs:[ Vdom.Attr.on_click (fun _ -> inject_remove_person name) ]\n              [ text \"x\" ]\n          ]\n      in\n      let name = td [ text name ] in\n      let counter = td [ counter ] in\n      tr [ name; counter; remove_person ])\n;;\n\nlet kudo_tracker =\n  let%sub people, inject_action = people in\n  let%sub form =\n    let%sub inject_add_person =\n      let%arr inject_action = inject_action in\n      fun name -> inject_action (Add name)\n    in\n    add_new_person_form ~inject_add_person\n  in\n  let%sub people_table =\n    let%sub inject_remove_person =\n      let%arr inject_action = inject_action in\n      fun name -> inject_action (Remove name)\n    in\n    people_table people ~inject_remove_person\n  in\n  let%arr people_table = people_table\n  and form = form in\n  let open Vdom.Node in\n  div\n    [ h2 [ text \"kudos tracker\" ]\n    ; table\n        [ thead [ tr [ th [ text \"Name\" ]; th [ text \"# Kudos\" ]; th [ text \"Remove\" ] ] ]\n        ; tbody (Map.data people_table)\n        ]\n    ; h2 [ text \"Add Person\" ]\n    ; form\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#kudo_tracker",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814665198,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Flow",
+      "pageMeta" : {
+        "title" : [ "Flow" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "07-flow",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Components as DAGs",
+        "id" : "components-as-dags"
+      }, {
+        "title" : "match%sub",
+        "id" : "matchsub"
+      }, {
+        "title" : "Bonsai.assoc",
+        "id" : "bonsai-assoc"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

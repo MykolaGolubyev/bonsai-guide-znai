@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Effect</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Making an Effect</h1></header>
+<p>As we saw back in the ./03-state.md chapter about state, values with type unit Vdom.Effect.t are used to schedule updates to stateful components. However, the Effect.t type can also be used to perform arbitrary side-effectful actions that return values. Most commonly, these side effects involve calling RPCs.A 'a Effect.t represents a side effect which, when performed, produces a value of type 'a .There's a lot of overlap between 'a Effect.t and 'a Deferred.t :Both are (likely) performing side effects (like calling RPCs) They produce values of type 'a when completed This result can be computed at some point in the future So it's important to note one major difference between 'a Effect.t and 'a Deferred.t : when bound (via let%bind ) multiple times, a Deferred will execute its side effect exactly once, but an Effect will side effect as many times as it is bound .This difference exists for both theoretical and practical purposes.On the theoretical side, Deferred.t , at its core, represents a value that will be computed at some point in the future (and may perform side effects in order to calculate that value), while Effect.t is a first-class representation of the side effect itself, which happens to produce a value.On the practical side, Deferred.t just doesn't mesh with the incremental computational model that Bonsai provides. In particular, a value of type 'a Deferred.t Value.t is quite hard to use correctly, as Bonsai has no way of knowing that the value contained inside is a Deferred, and it won't re-compute when the deferred is completed. {=html} &lt;!-- Also, unit tests for Bonsai\_web applications require compiling to JavaScript, and our JavaScript expect-test library is not capable of running Async tests, so `Effect.t` is used with synchronous functions to test apps that will use asyncronous functions in production. --&gt; The main use-case for Effect is for exposing RPCs to the Bonsai application, so for the rest of this document, we're going to be interacting with a function that has this type signature, which we'll pretend is an RPC: ocaml val uppercase : string -&gt; string Deferred.t Turning uppercase into a function that returns an Effect is easy with Bonsai_web.Effect.of_deferred_fun ocaml val of_deferred_fun : ('query -&gt; 'response Deferred.t) -&gt; 'query -&gt; 'response t of_deferred_fun is defined inside Bonsai_web instead of just Bonsai because Bonsai doesn't depend on Async . All the rest of the Effect functions are in Bonsai.Effect (but re-exported for Bonsai_web.Effect ). Using Bonsai_web.of_deferred_fun , we can make a new function that returns an Effect.t instead of Deferred.t ocaml let uppercase_e : string -&gt; string Effect.t = Bonsai_web.Effect.of_deferred_fun uppercase</p>
+</article>
+
+<article>
+<header><h1>Using Effects</h1></header>
+<p>By converting a deferred-returning function to return an effect, we can more easily compose it with other Bonsai APIs, like event handlers.In the following example, we have a textbox, a button, and a &quot;results&quot; display. We want to use the uppercase_e event-returning function from above to compute the uppercased value of the contents of the textbox when the button is clicked.The first implementation looks like this. ocaml module Request_state = struct type t = | Empty | Pending | Filled of string [@@deriving sexp, equal] let to_string = function | Empty -&gt; &quot;&lt;no request sent&gt;&quot; | Pending -&gt; &quot;pending...&quot; | Filled s -&gt; s ;; end let uppercase_rpc_sender = let%sub textbox = Forms.Elements.Textbox.string () in let%sub result_state = Bonsai.state Empty ~sexp_of_model:[%sexp_of: Request_state.t] ~equal:[%equal: Request_state.t] in let%arr textbox = textbox and result_state, set_result = result_state in let on_submit (contents : string) : unit Effect.t = let%bind.Effect s = uppercase_e contents in set_result (Filled s) in let form_view = textbox |&gt; Forms.label &quot;text to capitalize&quot; |&gt; Forms.view_as_vdom ~on_submit:(Forms.Submit.create ~f:on_submit ()) in Vdom.Node.div ~attrs:[ Vdom.Attr.style (Css_gen.display `Inline_grid) ] [ form_view; Vdom.Node.text (Request_state.to_string result_state) ] ;; Please note that the &quot;Pending&quot; state is not used (yet!) Let's zoom in on the on_submit handler: ocaml let on_submit (contents : string) : unit Effect.t = let%bind.Effect s = uppercase_e contents in set_result (Filled s) By calling the uppercase_e function, a string Effect.t is returned. Binding on that value gives us (at some point in the future) the result of the operation, which we immediately pass through to update the state of our component.But as mentioned above, the &quot;Pending&quot; state was never used. We can implement that by adding another bind to the effect, setting &quot;Pending&quot; immediately. ocaml let on_submit (contents : string) : unit Vdom.Effect.t = let open Bonsai.Effect.Let_syntax in let%bind () = set_result Pending in let%bind s = uppercase_e contents in set_result (Filled s) Next, read the ../blogs/testing.mdx chapter on testing.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "As we saw back in the ",
+        "type" : "SimpleText"
+      }, {
+        "url" : "/bonsai/guide/03-state",
+        "isFile" : false,
+        "type" : "Link",
+        "content" : [ {
+          "text" : "chapter about state",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "text" : ", values with",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "type ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "unit Vdom.Effect.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " are used to schedule updates to stateful",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "components. However, the ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Effect.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " type can also be used to perform",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "arbitrary side-effectful actions that return values. Most commonly,",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "these side effects involve calling RPCs.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "A ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a Effect.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " represents a side effect which, when performed, produces",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "a value of type ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ".",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "There's a lot of overlap between ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a Effect.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " and ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a Deferred.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ":",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "delimiter" : ".",
+      "startNumber" : 1,
+      "type" : "OrderedList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Both are (likely) performing side effects (like calling RPCs)",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "They produce values of type ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "'a",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " when completed",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "This result can be computed at some point in the future",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "So it's important to note one major difference between ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a Effect.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " and",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "code" : "'a Deferred.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ": when bound (via ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "let%bind",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ") multiple times, a",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "code" : "Deferred",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " will execute its side effect exactly once, but an ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Effect",
+        "type" : "InlinedCode"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "will side effect as many times as it is ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "bound",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ".",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "This difference exists for both theoretical and practical purposes.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "On the theoretical side, ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Deferred.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ", at its core, represents a value",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "that will be computed at some point in the future (and may perform side",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "effects in order to calculate that value), while ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Effect.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " is a",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "first-class representation of the side effect itself, which happens to",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "produce a value.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "On the practical side, ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Deferred.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " just doesn't mesh with the",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "incremental computational model that Bonsai provides. In particular, a",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "value of type ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a Deferred.t Value.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " is quite hard to use correctly, as",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "Bonsai has no way of knowing that the value contained inside is a",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "Deferred, and it won't re-compute when the deferred is completed.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "lang" : "{=html}",
+      "snippet" : "<!--\nAlso, unit tests for Bonsai\\_web applications require compiling to JavaScript,\nand our JavaScript expect-test library is not capable of running Async tests,\nso `Effect.t` is used with synchronous functions to test apps that will use\nasyncronous functions in production.\n-->\n",
+      "lineNumber" : "",
+      "type" : "Snippet"
+    }, {
+      "id" : "making-an-effect",
+      "title" : "Making an Effect",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The main use-case for Effect is for exposing RPCs to the Bonsai",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "application, so for the rest of this document, we're going to be",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "interacting with a function that has this type signature, which we'll",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "pretend is an RPC:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val uppercase : string -> string Deferred.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Turning ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "uppercase",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " into a function that returns an ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Effect",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is easy",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai_web.Effect.of_deferred_fun",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val of_deferred_fun : ('query -> 'response Deferred.t) -> 'query -> 'response t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "of_deferred_fun",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " is defined inside ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Bonsai_web",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " instead of just",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "Bonsai",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " because ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Bonsai",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " doesn't depend on ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Async",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ". All the rest of the",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "Effect functions are in ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Bonsai.Effect",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " (but re-exported for",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "Bonsai_web.Effect",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ").",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai_web.of_deferred_fun",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", we can make a new function that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "returns an ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Effect.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " instead of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Deferred.t",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let uppercase_e : string -> string Effect.t = Bonsai_web.Effect.of_deferred_fun uppercase\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      } ]
+    }, {
+      "id" : "using-effects",
+      "title" : "Using Effects",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "By converting a deferred-returning function to return an effect, we can",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "more easily compose it with other Bonsai APIs, like event handlers.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In the following example, we have a textbox, a button, and a \"results\"",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "display. We want to use the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "uppercase_e",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " event-returning function from",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "above to compute the uppercased value of the contents of the textbox",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "when the button is clicked.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The first implementation looks like this.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module Request_state = struct\n  type t =\n    | Empty\n    | Pending\n    | Filled of string\n  [@@deriving sexp, equal]\n\n  let to_string = function\n    | Empty -> \"<no request sent>\"\n    | Pending -> \"pending...\"\n    | Filled s -> s\n  ;;\nend\n\nlet uppercase_rpc_sender =\n  let%sub textbox = Forms.Elements.Textbox.string () in\n  let%sub result_state =\n    Bonsai.state\n      Empty\n      ~sexp_of_model:[%sexp_of: Request_state.t]\n      ~equal:[%equal: Request_state.t]\n  in\n  let%arr textbox = textbox\n  and result_state, set_result = result_state in\n  let on_submit (contents : string) : unit Effect.t =\n    let%bind.Effect s = uppercase_e contents in\n    set_result (Filled s)\n  in\n  let form_view =\n    textbox\n    |> Forms.label \"text to capitalize\"\n    |> Forms.view_as_vdom ~on_submit:(Forms.Submit.create ~f:on_submit ())\n  in\n  Vdom.Node.div\n    ~attrs:[ Vdom.Attr.style (Css_gen.display `Inline_grid) ]\n    [ form_view; Vdom.Node.text (Request_state.to_string result_state) ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#uppercase_rpc_sender",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Please note that the \"Pending\" state is not used (yet!)",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Let's zoom in on the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_submit",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " handler:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let on_submit (contents : string) : unit Effect.t =\n  let%bind.Effect s = uppercase_e contents in\n  set_result (Filled s)\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "By calling the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "uppercase_e",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " function, a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "string Effect.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is returned.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Binding on that value gives us (at some point in the future) the result",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of the operation, which we immediately pass through to update the state",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of our component.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "But as mentioned above, the \"Pending\" state was never used. We can",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "implement that by adding another bind to the effect, setting \"Pending\"",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "immediately.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let on_submit (contents : string) : unit Vdom.Effect.t =\n  let open Bonsai.Effect.Let_syntax in\n  let%bind () = set_result Pending in\n  let%bind s = uppercase_e contents in\n  set_result (Filled s)\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#uppercase_rpc_sender_bind",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Next, read the ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/blogs/testing.mdx",
+          "isFile" : true,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "chapter on testing",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814654381,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Effect",
+      "pageMeta" : {
+        "title" : [ "Effect" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "05-effect",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Making an Effect",
+        "id" : "making-an-effect"
+      }, {
+        "title" : "Using Effects",
+        "id" : "using-effects"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

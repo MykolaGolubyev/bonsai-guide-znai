@@ -1,0 +1,11 @@
+:root {
+    /*--znai-regular-font-family: 'Lato';*/
+}
+
+.znai-iframe.fit {
+    height: 140px;
+    margin-top: -24px;
+    margin-bottom: 24px;
+    border-left: 1px solid var(--znai-snippets-outer-border-color);
+}
+

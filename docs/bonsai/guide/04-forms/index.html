@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Forms</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Form.t</h1></header>
+<p>Back in the ./03-state.md state chapter, a textbox component was built out of the low-level Bonsai primitives. Textboxes are an example of form elements, and they're very common in real-world applications. Because of this, Bonsai has an entire library dedicated to building and combining forms.The library is called bonsai_web_ui_form , and it is built on top of the same primitives that were used in the previous chapter.For the rest of this doc, this module alias will be in effect: ocaml module Form = Bonsai_web_ui_form The primary type in the forms library is 'a Form.t . A value of type 'a Form.t represents the state of a form at one particular instant in time, where the form in question can edit values of type 'a .Because of the inherently stateful nature of form UIs, it is common to find 'a Form.t inside of Computation.t . For example, a textbox form element that produces strings has this type: ocaml val Form.Elements.Textbox.string : Source_code_position.t -&gt; string Form.t Computation.t And the type for a checkbox that produces bools has this type: ocaml val Form.Elements.Checkbox.bool : Source_code_position.t -&gt; default:bool -&gt; bool Form.t Computation.t There are three primary operations that can be performed on a 'a Form.t Extract the current value: val Form.value: 'a Form.t -&gt; 'a Or_error.t Compute the view: val Form.view_as_vdom: 'a Form.t -&gt; Vdom.Node.t Set the value of the form: val Form.set: 'a Form.t -&gt; 'a -&gt; unit Vdom.Effect.t The view_as_vdom function actually has an optional parameter, which we'll investigate soon. Let's look at them all in action, using the textbox component up above as an example: Form.value The &quot;value&quot; of a 'a Form.t is the current output of the form as filled in by the user. For a simple textbox, that value would be string , but most forms are compositions of subforms, so the produced value can be a record or variant.In the following example, the value of a textbox is extracted and printed as a sexp: &lt;!-- $MDX file=../../examples/bonsai_guide_code/form_examples.ml,part=form_textbox_value --&gt; {=html} ocaml let textbox_value = let%sub textbox = Form.Elements.Textbox.string () in let%arr textbox = textbox &gt;&gt;| Form.label &quot;my textbox&quot; in let value = Form.value textbox in Vdom.Node.div [ Form.view_as_vdom textbox ; Vdom.Node.sexp_for_debugging ([%sexp_of: string Or_error.t] value) ] ;; Forms returning their values inside of an Or_error.t may be surprising at first, but in practice, more complex forms are fallible, either because form validation for an element has failed, or because a large form is only partially filled out. By making the assumption that all forms are fallible, the rest of the API is simpler. Form.view_as_vdom This one is pretty simple, view_as_vdom renders the form into a Vdom.Node.t . However, it also has an optional parameter that makes submitting the form easier. Its full type signature is: ocaml module Submit : sig type 'a t val create : ?handle_enter:bool -&gt; ?button:string option -&gt; f:('a -&gt; unit Ui_effect.t) -&gt; unit -&gt; 'a t end val view_as_vdom : ?on_submit:'a Submit.t -&gt; 'a t -&gt; Vdom.Node.t Because forms are frequently paired with a &quot;submit&quot; button, the optional submission options provide an easy way to submit the form, with the f field being called with the value of the fully-validated form. The two options for submitting the form are handle_enter , when true will cause the form to be submitted whenever the &lt;enter&gt; key is pressed while focusing on a form element inside this form. button , if Some , a button with the provided text will be added to the form. This button will be disabled whenever the form is in an error state, but when the form is valid, the button will be enabled and will trigger the submission function when pressed. ocaml let textbox_on_submit = let%sub textbox = Form.Elements.Textbox.string () in let%arr textbox = textbox in textbox |&gt; Form.label &quot;text to alert&quot; |&gt; Form.view_as_vdom ~on_submit:(Form.Submit.create () ~f:alert) ;; Form.set Setting the contents of a form is a rarer requirement. Most forms are read-only (the user is the only one filling it out), but sometimes, a form should be modified by the program, perhaps to initialize the form in a specific state. ocaml let form_set = let%sub textbox = Form.Elements.Textbox.string () in let%arr textbox = textbox &gt;&gt;| Form.label &quot;my textbox&quot; in Vdom.Node.div [ Form.view_as_vdom textbox ; Vdom.Node.button ~attrs:[ Vdom.Attr.on_click (fun _ -&gt; Form.set textbox &quot;hello world&quot;) ] [ Vdom.Node.text &quot;click me&quot; ] ] ;;</p>
+</article>
+
+<article>
+<header><h1>Combinators</h1></header>
+<p>Most forms contain many input elements, and Bonsai-Forms comes with a set of combinators for combining many smaller subforms into a larger form.For this example, we'll build a form for the following type: ocaml type t = { some_string : string ; an_int : int ; on_or_off : bool } [@@deriving typed_fields, sexp_of] Building a form that produces values of this type requires the use of the typed_fields ppx, which you'll need to add to your jbuild. Deriving typed_fields will make a module named Typed_field containing a type with a constructor representing each field in the record it was derived on. ocaml let form_of_t : t Form.t Computation.t = Form.Typed.Record.make (module struct (* reimport the module that typed_fields just derived *) module Typed_field = Typed_field let label_for_field = `Inferred (* provide a form computation for each field in the record *) let form_for_field : type a. a Typed_field.t -&gt; a Form.t Computation.t = function | Some_string -&gt; Form.Elements.Textbox.string () | An_int -&gt; Form.Elements.Number.int ~default:0 ~step:1 () | On_or_off -&gt; Form.Elements.Checkbox.bool ~default:false () ;; end) ;; We can also do the same for variants with [@@deriving typed_variants] . ocaml type v = | A | B of int | C of string [@@deriving typed_variants, sexp_of] let form_of_v : v Form.t Computation.t = Form.Typed.Variant.make (module struct (* reimport the module that typed_fields just derived *) module Typed_variant = Typed_variant_of_v let label_for_variant = `Inferred let initial_choice = `First_constructor (* provide a form computation for constructor in the variant *) let form_for_variant : type a. a Typed_variant.t -&gt; a Form.t Computation.t = function | A -&gt; Bonsai.const (Form.return ()) | B -&gt; Form.Elements.Textbox.int () | C -&gt; Form.Elements.Textbox.string () ;; end) ;; Finally, using this new form and printing the results: ocaml let view_for_form : Vdom.Node.t Computation.t = let%sub form_t = form_of_t in let%sub form_v = form_of_v in let%arr form_t = form_t and form_v = form_v in let form = Form.both form_t form_v in let value = Form.value form in Vdom.Node.div [ Form.view_as_vdom form ; Vdom.Node.sexp_for_debugging ([%sexp_of: (t * v) Or_error.t] value) ] ;;</p>
+</article>
+
+<article>
+<header><h1>Validation Parsing</h1></header>
+<p>Notably missing in the Forms API is a &quot;map&quot; function. In its place is Form.project , which has this type signature: ocaml val project : 'a t -&gt; parse_exn:('a -&gt; 'b) -&gt; unparse:('b -&gt; 'a) -&gt; 'b t project is a way to move from a form producing values of type 'a to a form producing values of type 'b , but it requires two &quot;mapping&quot; functions, parse_exn , which moves from 'a to 'b as you'd expect, but the other, unparse , goes in the opposite direction! unparse is required because Form.set needs to be able to accept values of type 'b and route them through the setter for the input form.In practice, project is used to build forms for types that can be parsed from other types. For example, if Form.Elements.Textbox.int didn't exist, we could implement it like so: ocaml let int_textbox : int Form.t Computation.t = let%sub form = Form.Elements.Textbox.string () in let%arr form = form in Form.project form ~parse_exn:Int.of_string ~unparse:Int.to_string ;; You'll notice that non-integers are reported as an error. Form.project actually captures the exception thrown by Int.of_string and the Form.value returned by the project ed form is an Error .On to ./05-effect.md Chapter 5: Effect</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "Back in the ",
+        "type" : "SimpleText"
+      }, {
+        "url" : "/bonsai/guide/03-state",
+        "isFile" : false,
+        "type" : "Link",
+        "content" : [ {
+          "text" : "state chapter",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "text" : ", a textbox component was",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "built out of the low-level Bonsai primitives. Textboxes are an example",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "of form elements, and they're very common in real-world applications.",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "Because of this, Bonsai has an entire library dedicated to building and",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "combining forms.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "The library is called ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "bonsai_web_ui_form",
+        "type" : "InlinedCode"
+      }, {
+        "text" : ", and it is built on top of",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "the same primitives that were used in the previous chapter.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "For the rest of this doc, this module alias will be in effect:",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "lang" : "ocaml",
+      "snippet" : "module Form = Bonsai_web_ui_form\n",
+      "lineNumber" : "",
+      "type" : "Snippet"
+    }, {
+      "id" : "form-t",
+      "title" : "Form.t",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The primary type in the forms library is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Form.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". A value of type",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "'a Form.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " represents the state of a form at one particular instant in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "time, where the form in question can edit values of type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Because of the inherently stateful nature of form UIs, it is common to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "find ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Form.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " inside of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". For example, a textbox form",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "element that produces strings has this type:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val Form.Elements.Textbox.string\n  :  Source_code_position.t\n  -> string Form.t Computation.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "And the type for a checkbox that produces bools has this type:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val Form.Elements.Checkbox.bool\n  :  Source_code_position.t\n  -> default:bool\n  -> bool Form.t Computation.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "There are three primary operations that can be performed on a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "'a Form.t",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Extract the current value:",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "val Form.value: 'a Form.t -> 'a Or_error.t",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Compute the view: ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "val Form.view_as_vdom: 'a Form.t -> Vdom.Node.t",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Set the value of the form:",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "val Form.set: 'a Form.t -> 'a -> unit Vdom.Effect.t",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "view_as_vdom",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " function actually has an optional parameter, which",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "we'll investigate soon.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Let's look at them all in action, using the textbox component up above",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "as an example:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "id" : "form-t-form-value",
+        "level" : 2,
+        "title" : "Form.value",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The \"value\" of a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Form.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is the current output of the form as filled",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "in by the user. For a simple textbox, that value would be ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "string",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", but",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "most forms are compositions of subforms, so the produced value can be a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "record or variant.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In the following example, the value of a textbox is extracted and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "printed as a sexp:",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "<!-- $MDX file=../../examples/bonsai_guide_code/form_examples.ml,part=form_textbox_value -->",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "{=html}",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let textbox_value =\n  let%sub textbox = Form.Elements.Textbox.string () in\n  let%arr textbox = textbox >>| Form.label \"my textbox\" in\n  let value = Form.value textbox in\n  Vdom.Node.div\n    [ Form.view_as_vdom textbox\n    ; Vdom.Node.sexp_for_debugging ([%sexp_of: string Or_error.t] value)\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#form_textbox_value",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Forms returning their values inside of an ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Or_error.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " may be surprising",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "at first, but in practice, more complex forms are fallible, either",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "because form validation for an element has failed, or because a large",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "form is only partially filled out. By making the assumption that ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "all",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "forms are fallible, the rest of the API is simpler.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "id" : "form-t-form-view_as_vdom",
+        "level" : 2,
+        "title" : "Form.view_as_vdom",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This one is pretty simple, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "view_as_vdom",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " renders the form into a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Node.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". However, it also has an optional parameter that makes",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "submitting the form easier. Its full type signature is:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module Submit : sig\n  type 'a t\n\n  val create\n    :  ?handle_enter:bool\n    -> ?button:string option\n    -> f:('a -> unit Ui_effect.t)\n    -> unit\n    -> 'a t\nend\n\nval view_as_vdom : ?on_submit:'a Submit.t -> 'a t -> Vdom.Node.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Because forms are frequently paired with a \"submit\" button, the optional",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "submission options provide an easy way to submit the form, with the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "f",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "field being called with the value of the fully-validated form. The two",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "options for submitting the form are",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "delimiter" : ".",
+        "startNumber" : 1,
+        "type" : "OrderedList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "handle_enter",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ", when ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "true",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " will cause the form to be submitted",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "whenever the ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "<enter>",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " key is pressed while focusing on a form",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "element inside this form.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "button",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ", if ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Some",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ", a button with the provided text will be added",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "to the form. This button will be disabled whenever the form is in an",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "error state, but when the form is valid, the button will be enabled",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "and will trigger the submission function when pressed.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let textbox_on_submit =\n  let%sub textbox = Form.Elements.Textbox.string () in\n  let%arr textbox = textbox in\n  textbox\n  |> Form.label \"text to alert\"\n  |> Form.view_as_vdom ~on_submit:(Form.Submit.create () ~f:alert)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#form_textbox_on_submit",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "id" : "form-t-form-set",
+        "level" : 2,
+        "title" : "Form.set",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Setting the contents of a form is a rarer requirement. Most forms are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "read-only (the user is the only one filling it out), but sometimes, a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "form should be modified by the program, perhaps to initialize the form",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "in a specific state.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let form_set =\n  let%sub textbox = Form.Elements.Textbox.string () in\n  let%arr textbox = textbox >>| Form.label \"my textbox\" in\n  Vdom.Node.div\n    [ Form.view_as_vdom textbox\n    ; Vdom.Node.button\n        ~attrs:[ Vdom.Attr.on_click (fun _ -> Form.set textbox \"hello world\") ]\n        [ Vdom.Node.text \"click me\" ]\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#form_set",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      } ]
+    }, {
+      "id" : "combinators",
+      "title" : "Combinators",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Most forms contain many input elements, and Bonsai-Forms comes with a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "set of combinators for combining many smaller subforms into a larger",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "form.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "For this example, we'll build a form for the following type:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "type t =\n  { some_string : string\n  ; an_int : int\n  ; on_or_off : bool\n  }\n[@@deriving typed_fields, sexp_of]\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Building a form that produces values of this type requires the use of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "typed_fields",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " ppx, which you'll need to add to your jbuild.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Deriving ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "typed_fields",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " will make a module named ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Typed_field",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "containing a type with a constructor representing each field in the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "record it was derived on.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let form_of_t : t Form.t Computation.t =\n  Form.Typed.Record.make\n    (module struct\n      (* reimport the module that typed_fields just derived *)\n      module Typed_field = Typed_field\n\n      let label_for_field = `Inferred\n\n      (* provide a form computation for each field in the record *)\n      let form_for_field : type a. a Typed_field.t -> a Form.t Computation.t = function\n        | Some_string -> Form.Elements.Textbox.string ()\n        | An_int -> Form.Elements.Number.int ~default:0 ~step:1 ()\n        | On_or_off -> Form.Elements.Checkbox.bool ~default:false ()\n      ;;\n    end)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We can also do the same for variants with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "[@@deriving typed_variants]",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "type v =\n  | A\n  | B of int\n  | C of string\n[@@deriving typed_variants, sexp_of]\n\nlet form_of_v : v Form.t Computation.t =\n  Form.Typed.Variant.make\n    (module struct\n      (* reimport the module that typed_fields just derived *)\n      module Typed_variant = Typed_variant_of_v\n\n      let label_for_variant = `Inferred\n      let initial_choice = `First_constructor\n\n      (* provide a form computation for constructor in the variant *)\n      let form_for_variant : type a. a Typed_variant.t -> a Form.t Computation.t\n        = function\n          | A -> Bonsai.const (Form.return ())\n          | B -> Form.Elements.Textbox.int ()\n          | C -> Form.Elements.Textbox.string ()\n      ;;\n    end)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Finally, using this new form and printing the results:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let view_for_form : Vdom.Node.t Computation.t =\n  let%sub form_t = form_of_t in\n  let%sub form_v = form_of_v in\n  let%arr form_t = form_t\n  and form_v = form_v in\n  let form = Form.both form_t form_v in\n  let value = Form.value form in\n  Vdom.Node.div\n    [ Form.view_as_vdom form\n    ; Vdom.Node.sexp_for_debugging ([%sexp_of: (t * v) Or_error.t] value)\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#record_form_view",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      } ]
+    }, {
+      "id" : "validation-parsing",
+      "title" : "Validation Parsing",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Notably missing in the Forms API is a \"map\" function. In its place is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Form.project",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which has this type signature:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "val project\n  :  'a t\n  -> parse_exn:('a -> 'b)\n  -> unparse:('b -> 'a)\n  -> 'b t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "project",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is a way to move from a form producing values of type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "a form producing values of type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'b",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", but it requires two \"mapping\"",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "functions, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "parse_exn",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which moves from ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'b",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " as you'd expect,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "but the other, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "unparse",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", goes in the opposite direction!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "unparse",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is required because ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Form.set",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " needs to be able to accept",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "values of type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'b",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and route them through the setter for the input",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "form.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In practice, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "project",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is used to build forms for types that can be",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "parsed from other types. For example, if ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Form.Elements.Textbox.int",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "didn't exist, we could implement it like so:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let int_textbox : int Form.t Computation.t =\n  let%sub form = Form.Elements.Textbox.string () in\n  let%arr form = form in\n  Form.project form ~parse_exn:Int.of_string ~unparse:Int.to_string\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#int_textbox",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "You'll notice that non-integers are reported as an error. ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Form.project",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "actually captures the exception thrown by ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Int.of_string",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Form.value",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " returned by the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "project",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "ed form is an ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Error",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "On to ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/05-effect",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "Chapter 5: Effect",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814644019,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Forms",
+      "pageMeta" : {
+        "title" : [ "Forms" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "04-forms",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Form.t",
+        "id" : "form-t"
+      }, {
+        "title" : "Combinators",
+        "id" : "combinators"
+      }, {
+        "title" : "Validation Parsing",
+        "id" : "validation-parsing"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

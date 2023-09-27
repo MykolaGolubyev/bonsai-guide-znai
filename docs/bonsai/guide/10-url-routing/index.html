@@ -1,0 +1,1900 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: URL Routing</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Handwritten Parse / Unparse</h1></header>
+<p>For any web application that supports navigation between different pages, URLs can be an easy way to dramatically improve the user experience: they automatically give your app some very useful featuresUsers can save and share links to specific navigational states within the app The browser's forward and back buttons allow quick historical navigation Reading and editing URLs can be used (as a last resort maybe) for precise navigation It might not be obvious at first, but URL integration is bidirectional:when the URL changes, the application responds by updating its navigation when the user navigates in the app, the URL should be updated to match In Bonsai, the 'a Url_var.t type is used to manage this synchronization; when given a parsing function (that parses a URL into values of your domain-specific 'a type) and an &quot;unparsing&quot; function (which turns 'a back into a URL), the url-var can be treated like a ./02-dynamism.md Var.t and it'll handle all the browser-specific url management for you!In this guide, we'll start by building a url-var by implementing parse and unparse by hand, but the rest of this chapter will focus on the API built for the typed-fields ppx, which will simultaneously generate the parser and unparser functions for you (and ensure that the printer and parser round-trip)!Imagine you have a site with the following URLs: /search?q=capybara /settings URL Var's previous API allowed you to parse/unparse this URL by you manually implementing its parse and unparse functions: ocaml module My_google_clone = struct type t = | Homepage | Search of string [@@deriving sexp, equal] let parse_exn ({ path; query; _ } : Url_var.Components.t) : t = let path = String.split path ~on:'/' in match path with | [ &quot;home&quot; ] -&gt; Homepage | [ &quot;search&quot; ] -&gt; (match Map.find (query : _ String.Map.t) &quot;q&quot; with | Some [ query ] -&gt; Search query | None | Some [] -&gt; failwith &quot;search missing query param&quot; | Some (_ :: _ :: _) -&gt; failwith &quot;search with too many query params&quot;) | _ -&gt; failwith &quot;unknown path&quot; ;; let unparse (t : t) : Url_var.Components.t = match t with | Homepage -&gt; Url_var.Components.create ~path:&quot;home&quot; () | Search query -&gt; Url_var.Components.create ~path:&quot;search&quot; ~query:(String.Map.singleton &quot;q&quot; [ query ]) () ;; end You would have needed to write your own tests in order verify that your parser/unparser successfully round-trip ( parse_exn(unparse(x)) gives you back the original x ).</p>
+</article>
+
+<article>
+<header><h1>Typed field Parse / Unparse</h1></header>
+<p>With URL Var's typed field API, you can define a module that is able to parse a URL into My_google_clone.t and unparse My_google_clone.t into a URL: ocaml module My_google_clone = struct type t = | Homepage | Search of string [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | Homepage -&gt; Parser.unit | Search -&gt; Parser.from_query_required ~key:&quot;q&quot; Value_parser.string ;; end let parser = Parser.Variant.make (module My_google_clone) let versioned_parser = Versioned_parser.first_parser parser let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌────────────────────┐ │ All urls │ ├────────────────────┤ │ /homepage │ │ /search?q=&lt;string&gt; │ └────────────────────┘ |}] ;; After creating a My_google_clone.t Url_var.t like this: let url_var = Url_var.Typed.make (module My_google_clone) versioned_parser ~fallback:(fun _exn _components -&gt; My_google_clone.Whoops) ;; You can then get an automatically-updating My_google_clone.t Value.t with Url_var.value which updates any time that the url changes and can be threaded into the Bonsai computation like any other Value.t .On the other side, Url_var.set_effect can be called to to change the content of the url-var, and in doing so, will update the URL to reflect it.The rest of the operations for Url_var.t are intended to be used outside of a bonsai app: type 'a t (* for use in bonsai computation *) val value : 'a t -&gt; 'a Value.t val set_effect : 'a t -&gt; 'a -&gt; unit Effect.t (* for use outside of bonsai computation *) val update : 'a t -&gt; f:('a -&gt; 'a) -&gt; unit val set : 'a t -&gt; 'a -&gt; unit val get : 'a t -&gt; 'a The actual call to Url_var.Typed.make must only run in a web-browser. This means that if you've factored your app out into a standard lib/ , test/ bin/ structure, then the Url_var.Typed.make function should be located in bin/ . If you stick it in the lib/ section, then tests in test/ may fail because the url-var can't deal with being in an expect-test environment. If you are using cohttp_static_handler's Single_page_handler to serve your page, it will redirect unknown urls on its own which prevents url_var from doing any parsing/error handling. You can get around this by setting the on_unknown_url parameter to `Index Single_page_handler.create_handler ~title:&lt;title&gt; ~assets:&lt;assets&gt; ~on_unknown_url:`Index What is a path and what is a query? URLs have lots of different https://developer.mozilla.org/en-US/docs/Learn/Common_questions/What_is_a_URL parts:However, URL Var only focuses on two of them, the path and the query.Given example.com/path/to/my/file?key1=value1&amp;key2=value2&amp;key3=value3 has the following parts: - Path path/to/my/file - Query ?key1=value1&amp;key2=value2&amp;key3=value3 In the eyes of URL Var, a path is a list of strings separated by / , and a query is a key-value pair list separated by &amp; . The functions in the Typed API make heavy use of this terminology.The path and query together are represented like this: module Components = struct type t = { path : string list ; query : string list String.Map.t } end Something that's weird about the above representation is that the query is a string-to-string-list pairing instead of a string-to-string pairing. The reason for this is weird. What should &quot;?a=1&amp;a=2&amp;a=3&quot; parse to? Some browsers parse this to {a : [1, 2, 3]} , others drop all of the duplicate instances except one, others even https://stackoverflow.com/questions/32572264/what-might-be-shufflling-my-query-string-parameters-constructed-in-javascript shuffle the keys as an anti-tracking measure. URL Var disallows repeated keys. When you use from_query_many the URL shape it expects is &quot;?a=1,2,3&quot; instead of &quot;?a=1&amp;a=2&amp;a=3&quot; . When should you put something in the path vs.&nbsp;in the query? There's no right and wrong answer, ultimately it's a matter of taste: a URL like website.com/profile/capybara_lover123 feels better than website.com?profile=capybara_lover123 and likewise posts?after=dec-2 is preferable to posts/after/dec-2 .A good rule of thumb is that paths should be used for things that are &quot;resource-like&quot;, and query-parameters be used for optional or configurable parameters to that resource. Records If you want to parse/unparse your URL or a part of your URL as a record you can use the Parser.Record module which needs you to derive typed_fields on your record type. ocaml module My_google_clone = struct type t = { query : string ; language : string } [@@deriving typed_fields, sexp, equal] let parser_for_field : type a. a Typed_field.t -&gt; a Parser.t = function | Query -&gt; Parser.from_query_required ~key:&quot;q&quot; Value_parser.string | Language -&gt; Parser.from_query_required Value_parser.string ;; module Path_order = Parser.Record.Path_order (Typed_field) let path_order = Path_order.T [] end let parser = Parser.Record.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌────────────────────────────────┐ │ All urls │ ├────────────────────────────────┤ │ /?language=&lt;string&gt;&amp;q=&lt;string&gt; │ └────────────────────────────────┘ |}] ;; The key of Query is &quot;q&quot; since it's explicitly given through the key optional parameter. The key of Language is &quot;language&quot; which was inferred with the help of typed_fields since no key was given. path_order is not really doing anything right now, but will be useful shortly. The : type a. a Typed_field.t -&gt; a Parser.t type annotation might be confusing if it's the first time you see it, but the good and bad thing is that it's always the same annotation. The reason that this annotation is needed is because 'a Typed_field.t is a GADT, which results in each of its constructors having different types which can result in weird type errors without the explicit annotation. There are cool internal talks and resources that go over this topic in more detail, but for now, it's totally fine to just always type the same type annotation type a. a Typed_field.t -&gt; a Parser.t . It might be good to have [language] have its own type. We can use Parser.project or Value_parser.project to change their types. ocaml module My_google_clone = struct module Language : sig type t [@@deriving sexp, equal] val to_string : t -&gt; string val of_string : string -&gt; t end = struct include String end type t = { query : string ; language : Language.t } [@@deriving typed_fields, sexp, equal] let parser_for_field : type a. a Typed_field.t -&gt; a Parser.t = function | Query -&gt; Parser.from_query_required ~key:&quot;q&quot; Value_parser.string | Language -&gt; Parser.from_query_required (Value_parser.project Value_parser.string ~parse_exn:Language.of_string ~unparse:Language.to_string) ;; module Path_order = Parser.Record.Path_order (Typed_field) let path_order = Path_order.T [] end let parser = Parser.Record.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌─────────────────────────────────────────┐ │ All urls │ ├─────────────────────────────────────────┤ │ /?language=&lt;project&lt;string&gt;&gt;&amp;q=&lt;string&gt; │ └─────────────────────────────────────────┘ |}] ;; We could've also used Value_parser.stringable (module Language) as a shorthand for projecting stringable types. On a similar note, Value_parser also provides other primitives like sexpable and binable_via_base64 , int , float , and others. Right now, we are taking both fields the query, but you might want to design your URL such that users see google.com/en/?q=capybara instead of google.com/?language=en&amp;q=capybara . Instead of from_query_required , we can use from_path . ocaml module My_google_clone = struct module Language : sig type t [@@deriving sexp, equal] val to_string : t -&gt; string val of_string : string -&gt; t end = struct include String end type t = { query : string ; language : Language.t } [@@deriving typed_fields, sexp, equal] let parser_for_field : type a. a Typed_field.t -&gt; a Parser.t = function | Query -&gt; Parser.from_query_required ~key:&quot;q&quot; Value_parser.string | Language -&gt; Parser.from_path (Value_parser.project Value_parser.string ~parse_exn:Language.of_string ~unparse:Language.to_string) ;; module Path_order = Parser.Record.Path_order (Typed_field) let path_order = Path_order.T [] end let parser = Parser.Record.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| Error with parser. ┌────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────┐ │ Check name │ Error message │ ├────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────┤ │ Sane path orders check │ (&quot;Each path parser must be present in path order. The following fields were missing:&quot; │ │ │ (missing_fields (Language))) │ └────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────┘ |}] ;; We get an error! The reason for this is that, unlike query fields where keys can be parsed and unparsed in any order since it's a string list String.Map.t under the hood, the path is just a string list where the order in which you parse things matters. A URL like google.com/search/en is different from google.com/en/search . If you take multiple fields from the path, then you need to specify the order in which they should be parsed and unparsed in. check_ok_and_print_urls_or_errors will let you know about any issues statically. Here the problem can be fixed by adding Language to path_order . ocaml module My_google_clone = struct module Language : sig type t [@@deriving sexp, equal] val to_string : t -&gt; string val of_string : string -&gt; t end = struct include String end type t = { query : string ; language : Language.t } [@@deriving typed_fields, sexp, equal] let parser_for_field : type a. a Typed_field.t -&gt; a Parser.t = function | Query -&gt; Parser.from_query_required ~key:&quot;q&quot; Value_parser.string | Language -&gt; Parser.from_path (Value_parser.project Value_parser.string ~parse_exn:Language.of_string ~unparse:Language.to_string) ;; module Path_order = Parser.Record.Path_order (Typed_field) let path_order = Path_order.T [ Language ] end let parser = Parser.Record.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌───────────────────────────────┐ │ All urls │ ├───────────────────────────────┤ │ /&lt;project&lt;string&gt;&gt;?q=&lt;string&gt; │ └───────────────────────────────┘ |}] ;; Finally, although it's not ergonomic in this example, it's worth mentioning what happens when you nest records. ocaml module Nested = struct type t = { foo : string ; bar : int } [@@deriving typed_fields, sexp, equal] let parser_for_field : type a. a Typed_field.t -&gt; a Parser.t = function | Foo -&gt; Parser.from_query_required Value_parser.string | Bar -&gt; Parser.from_query_required Value_parser.int ;; module Path_order = Parser.Record.Path_order (Typed_field) let path_order = Path_order.T [] end module Parent = struct type t = { a : Nested.t ; b : Nested.t } [@@deriving typed_fields, equal, sexp] let parser_for_field : type a. a Typed_field.t -&gt; a Parser.t = function | A -&gt; Parser.Record.make (module Nested) | B -&gt; Parser.Record.make (module Nested) ;; module Path_order = Parser.Record.Path_order (Typed_field) let path_order = Path_order.T [] end let parser = Parser.Record.make (module Parent) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌─────────────────────────────────────────────────────────┐ │ All urls │ ├─────────────────────────────────────────────────────────┤ │ /?a.bar=&lt;int&gt;&amp;a.foo=&lt;string&gt;&amp;b.bar=&lt;int&gt;&amp;b.foo=&lt;string&gt; │ └─────────────────────────────────────────────────────────┘ |}] ;; Records nested inside of other records are namespaced on top of each other, but the namespace can be changed/be overridden with the optional parameter ~namespace on Parser.Record.make . Variants If you want to parse/unparse your URL or a part of your URL as a variant you can use the Parser.Variant module which needs you to derive typed_variants on your variant type. ocaml module My_google_clone = struct type t = | Homepage | Search | Maps [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | Homepage -&gt; Parser.unit | Search -&gt; Parser.unit | Maps -&gt; Parser.unit ;; end let parser = Parser.Variant.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌───────────┐ │ All urls │ ├───────────┤ │ /homepage │ │ /maps │ │ /search │ └───────────┘ |}] ;; Parser.unit is a no-op parser for when you don't need to parse anything. Its type is unit Parser.t and is useful when dealing with variant constructors that don't have a payload. It would be nice if we could express a homepage as google.com/ instead of google.com/homepage . ocaml module My_google_clone = struct type t = | Homepage | Search | Maps [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | Homepage -&gt; Parser.end_of_path Parser.unit | Search -&gt; Parser.unit | Maps -&gt; Parser.unit ;; end let parser = Parser.Variant.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌──────────┐ │ All urls │ ├──────────┤ │ / │ │ /maps │ │ /search │ └──────────┘ |}] ;; The path identifiers for Maps and Search were inferred with the help of typed_variants , and the homepage identifier was overridden with end_of_path . When something gets inferred vs when it's overridden can be tricky to reason about, but the way it works is that the &quot;pattern&quot; to match will be inferred unless the following combinators are used: - with_remaining_path pattern expects the remaining path to be equal to pattern . - with_prefix pattern expects the remaining path to have pattern as its prefix. - end_of_path expect the remaining path to be empty. It would be nice if we had payload on the URL like google.com/search?query=capybara or google.com/maps?location=New_York . This can be accomplished with the same combinators that the previous Parser.Record example used. ocaml module My_google_clone = struct type t = | Homepage | Search of string | Maps of string [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | Homepage -&gt; Parser.end_of_path Parser.unit | Search -&gt; Parser.from_query_required ~key:&quot;query&quot; Value_parser.string | Maps -&gt; Parser.from_query_required ~key:&quot;location&quot; Value_parser.string ;; end let parser = Parser.Variant.make (module My_google_clone) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| URL parser looks good! ┌─────────────────────────┐ │ All urls │ ├─────────────────────────┤ │ / │ │ /maps?location=&lt;string&gt; │ │ /search?query=&lt;string&gt; │ └─────────────────────────┘ |}] ;; Static checks on your url parsing/unparsing Parser.check_ok_and_print_urls_or_errors will check for any ambiguity/weirdness in your parser. You'll also be able to see if the urls your site supports changes unexpectedly. The library tends to infer things off of the names of your types. For instance, paths are sometimes inferred from constructor names, but can be overridden with end_of_path , with_prefix or with_remaining_path . The rules for how this works are specified in the MLI, but it's a lot nicer to explicitly see the shapes of your url in an expect test. ocaml module Ambiguous_url = struct type t = | Foo | Bar [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | Foo -&gt; Parser.with_prefix [ &quot;x&quot; ] Parser.unit | Bar -&gt; Parser.with_prefix [ &quot;x&quot; ] Parser.unit ;; end let parser = Parser.Variant.make (module Ambiguous_url) let%expect_test _ = Parser.check_ok_and_print_urls_or_errors parser; [%expect {| Error with parser. ┌─────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────┐ │ Check name │ Error message │ ├─────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤ │ Ambiguous choices for picking variant constructor check │ (&quot;Duplicate patterns found!&quot; │ │ │ (duplicate_patterns (((pattern ((Match x))) (needed_match Prefix))))) │ │ Duplicate urls check │ (&quot;Ambiguous, duplicate urls expressed in parser! This was probably caused due to conflic │ │ │ ting renames with [with_prefix] or [with_remaining_path].&quot; │ │ │ (duplicate_urls (/x))) │ └─────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────┘ |}] ;; No more broken links in documents As your site changes, it's likely that your parser will also change, which introduces the possibility that old urls no longer parse! Broken urls in your users' documents is not fun, but you can guard against this by using Versioned_parser to &quot;stabilize&quot; them. ocaml module V1 = struct type t = Foo of string [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | Foo -&gt; Parser.from_path Value_parser.string ;; end let v1_parser = Versioned_parser.first_parser (Parser.Variant.make (module V1)) module V2 = struct type t = New_foo of string [@@deriving typed_variants, sexp, equal] let parser_for_variant : type a. a Typed_variant.t -&gt; a Parser.t = function | New_foo -&gt; Parser.from_path Value_parser.string ;; end let v2_parser = Versioned_parser.new_parser (Parser.Variant.make (module V2)) ~previous:v1_parser ~f:(function | Foo s -&gt; New_foo s) ;; let%expect_test _ = Versioned_parser.check_ok_and_print_urls_or_errors v2_parser; [%expect {| URL parser looks good! ┌───────────────────┐ │ All urls │ ├───────────────────┤ │ /new_foo/&lt;string&gt; │ └───────────────────┘ | falls back to | v URL parser looks good! ┌───────────────┐ │ All urls │ ├───────────────┤ │ /foo/&lt;string&gt; │ └───────────────┘ |}] ;; If you're migrating your site from the non-typed URL var into the Typed version of the API, then you cannot use Versioned_parser.first_parser since you won't already have a Typed.Parser . But no worries! You can use Versioned_parsed.of_non_typed_parser instead of Versioned_parser.first_parser More resources The MLI is quite long, so here are some pointers to save you time! I want my URL type to be a record! -&gt; You should look for Typed.Record.make in the MLI/demo page. I want my URL to take things from the path (e.g. &quot;/profile/capybara_lover123&quot; or &quot;/profile/chinchilla_was_taken&quot; or &quot;profile/&lt;string&gt;&quot;) -&gt; You can use Parser.from_path and Parser.from_remaining_path for the &quot;variable parts&quot; of the path and with_prefix and with_remaining_path for the &quot;constant&quot; parts. Examples are in demo page + better explanation in MLI. I want my URL type to be made up of something other than the provided primitives! -&gt; Value_parser.project or Parser.project should do the trick! What are all the provided primitives?? -&gt; These primitives are located and documented in Value_parser . What order do the parsers/unparsers run? -&gt; Preorder-like order. Records' fields are weirder since the order you parse the record's fields might lead to different results, you can specify the order through path_order . I want my [Value_parser] to recover from failure. -&gt; You can use Value_parser.fallback to provide a default value to use when the parser fails.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "For any web application that supports navigation between different",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "pages, URLs can be an easy way to dramatically improve the user",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "experience: they automatically give your app some very useful features",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "delimiter" : ".",
+      "startNumber" : 1,
+      "type" : "OrderedList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Users can save and share links to specific navigational states",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "within the app",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The browser's forward and back buttons allow quick historical",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "navigation",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Reading and editing URLs can be used (as a last resort maybe) for",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "precise navigation",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "It might not be obvious at first, but URL integration is bidirectional:",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "bulletMarker" : "-",
+      "tight" : true,
+      "type" : "BulletList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "when the URL changes, the application responds by updating its",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "navigation",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "when the user navigates in the app, the URL should be updated to",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "match",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "In Bonsai, the ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a Url_var.t",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " type is used to manage this",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "synchronization; when given a parsing function (that parses a URL into",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "values of your domain-specific ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " type) and an \"unparsing\" function",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "(which turns ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "'a",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " back into a URL), the url-var can be treated like a",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "url" : "/bonsai/guide/02-dynamism",
+        "isFile" : false,
+        "type" : "Link",
+        "content" : [ {
+          "code" : "Var.t",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "text" : " and it'll handle all the browser-specific",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "url management for you!",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "In this guide, we'll start by building a url-var by implementing parse",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "and unparse by hand, but the rest of this chapter will focus on the API",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "built for the typed-fields ppx, which will simultaneously generate the",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "parser ",
+        "type" : "SimpleText"
+      }, {
+        "type" : "Emphasis",
+        "content" : [ {
+          "text" : "and",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "text" : " unparser functions for you (and ensure that the printer and",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "parser round-trip)!",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "id" : "handwritten-parse-unparse",
+      "title" : "Handwritten Parse / Unparse",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Imagine you have a site with the following URLs:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : true,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "/search?q=capybara",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "/settings",
+              "type" : "InlinedCode"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "URL Var's previous API allowed you to parse/unparse this URL by you",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "manually implementing its parse and unparse functions:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    type t =\n      | Homepage\n      | Search of string\n    [@@deriving sexp, equal]\n\n    let parse_exn ({ path; query; _ } : Url_var.Components.t) : t =\n      let path = String.split path ~on:'/' in\n      match path with\n      | [ \"home\" ] -> Homepage\n      | [ \"search\" ] ->\n        (match Map.find (query : _ String.Map.t) \"q\" with\n         | Some [ query ] -> Search query\n         | None | Some [] -> failwith \"search missing query param\"\n         | Some (_ :: _ :: _) -> failwith \"search with too many query params\")\n      | _ -> failwith \"unknown path\"\n    ;;\n\n    let unparse (t : t) : Url_var.Components.t =\n      match t with\n      | Homepage -> Url_var.Components.create ~path:\"home\" ()\n      | Search query ->\n        Url_var.Components.create\n          ~path:\"search\"\n          ~query:(String.Map.singleton \"q\" [ query ])\n          ()\n    ;;\n  end\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "You would have needed to write your own tests in order verify that your",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "parser/unparser successfully round-trip (",
+          "type" : "SimpleText"
+        }, {
+          "code" : "parse_exn(unparse(x))",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " gives",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "you back the original ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "x",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ").",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "typed-field-parse-unparse",
+      "title" : "Typed field Parse / Unparse",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "With URL Var's typed field API, you can define a module that is able to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "parse a URL into ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "My_google_clone.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and unparse ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "My_google_clone.t",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "into a URL:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module My_google_clone = struct\n  type t =\n    | Homepage\n    | Search of string\n  [@@deriving typed_variants, sexp, equal]\n\n  let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n    | Homepage -> Parser.unit\n    | Search -> Parser.from_query_required ~key:\"q\" Value_parser.string\n  ;;\nend\n\nlet parser = Parser.Variant.make (module My_google_clone)\nlet versioned_parser = Versioned_parser.first_parser parser\n\nlet%expect_test _ =\n  Parser.check_ok_and_print_urls_or_errors parser;\n  [%expect\n    {|\n    URL parser looks good!\n    ┌────────────────────┐\n    │ All urls           │\n    ├────────────────────┤\n    │ /homepage          │\n    │ /search?q=<string> │\n    └────────────────────┘ |}]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "After creating a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "My_google_clone.t Url_var.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " like this:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "",
+        "snippet" : "let url_var =\n  Url_var.Typed.make\n    (module My_google_clone)\n    versioned_parser\n    ~fallback:(fun _exn _components -> My_google_clone.Whoops)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "You can then get an automatically-updating ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "My_google_clone.t Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Url_var.value",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " which updates any time that the url changes and can",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "be threaded into the Bonsai computation like any other ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "On the other side, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Url_var.set_effect",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " can be called to to change the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "content of the url-var, and in doing so, will update the URL to reflect",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "it.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The rest of the operations for ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Url_var.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " are intended to be used",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "outside of a bonsai app:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "",
+        "snippet" : "type 'a t\n\n(* for use in bonsai computation *)\nval value : 'a t -> 'a Value.t\nval set_effect : 'a t -> 'a -> unit Effect.t\n\n(* for use outside of bonsai computation *)\nval update : 'a t -> f:('a -> 'a) -> unit\nval set : 'a t -> 'a -> unit\nval get : 'a t -> 'a\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The actual call to ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Url_var.Typed.make",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " must only run in a web-browser.",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "This means that if you've factored your app out into a standard ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "lib/",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ",",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "test/",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "bin/",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " structure, then the ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Url_var.Typed.make",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " function should",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "be located in ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "bin/",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ". If you stick it in the ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "lib/",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " section, then tests",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "in ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "test/",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " may fail because the url-var can't deal with being in an",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "expect-test environment.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "If you are using cohttp_static_handler's Single_page_handler to serve",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "your page, it will redirect unknown urls on its own which prevents",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "url_var from doing any parsing/error handling. You can get around this",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "by setting the ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "on_unknown_url",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " parameter to ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "`Index",
+            "type" : "InlinedCode"
+          } ]
+        }, {
+          "lang" : "",
+          "snippet" : "Single_page_handler.create_handler\n   ~title:<title>\n   ~assets:<assets>\n   ~on_unknown_url:`Index\n",
+          "lineNumber" : "",
+          "type" : "Snippet"
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "id" : "typed-field-parse-unparse-what-is-a-path-and-what-is-a-query",
+        "level" : 2,
+        "title" : "What is a path and what is a query?",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "URLs have lots of different",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "url" : "https://developer.mozilla.org/en-US/docs/Learn/Common_questions/What_is_a_URL",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "parts",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ":",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "However, URL Var only focuses on two of them, the path and the query.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Given ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "example.com/path/to/my/file?key1=value1&key2=value2&key3=value3",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "has the following parts: - Path ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "path/to/my/file",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " - Query",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "?key1=value1&key2=value2&key3=value3",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In the eyes of URL Var, a path is a list of strings separated by ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "/",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ",",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and a query is a key-value pair list separated by ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "&",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". The functions in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the Typed API make heavy use of this terminology.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "path",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "query",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " together are represented like this:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "",
+        "snippet" : "module Components = struct\n  type t =\n    { path : string list\n    ; query : string list String.Map.t\n    }\nend\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Something that's weird about the above representation is that the query",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "is a string-to-string-list pairing instead of a string-to-string",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "pairing. The reason for this is weird. What should ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "\"?a=1&a=2&a=3\"",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "parse to? Some browsers parse this to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "{a : [1, 2, 3]}",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", others drop all",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of the duplicate instances except one, others even ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "https://stackoverflow.com/questions/32572264/what-might-be-shufflling-my-query-string-parameters-constructed-in-javascript",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "shuffle the keys as",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "an anti-tracking",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "measure",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "URL Var disallows repeated keys. When you use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "from_query_many",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " the URL",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "shape it expects is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "\"?a=1,2,3\"",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " instead of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "\"?a=1&a=2&a=3\"",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "When should you put something in the path vs. in the query? There's no",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "right and wrong answer, ultimately it's a matter of taste: a URL like",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "website.com/profile/capybara_lover123",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " feels better than",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "website.com?profile=capybara_lover123",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and likewise ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "posts?after=dec-2",
+            "type" : "InlinedCode"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "is preferable to ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "posts/after/dec-2",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ".",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "A good rule of thumb is that paths should be used for things that are",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "\"resource-like\", and query-parameters be used for optional or",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "configurable parameters to that resource.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "id" : "typed-field-parse-unparse-records",
+        "level" : 2,
+        "title" : "Records",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "If you want to parse/unparse your URL or a part of your URL as a record",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "you can use the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Parser.Record",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " module which needs you to derive",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "typed_fields",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " on your record type.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    type t =\n      { query : string\n      ; language : string\n      }\n    [@@deriving typed_fields, sexp, equal]\n\n    let parser_for_field : type a. a Typed_field.t -> a Parser.t = function\n      | Query -> Parser.from_query_required ~key:\"q\" Value_parser.string\n      | Language -> Parser.from_query_required Value_parser.string\n    ;;\n\n    module Path_order = Parser.Record.Path_order (Typed_field)\n\n    let path_order = Path_order.T []\n  end\n\n  let parser = Parser.Record.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n      URL parser looks good!\n      ┌────────────────────────────────┐\n      │ All urls                       │\n      ├────────────────────────────────┤\n      │ /?language=<string>&q=<string> │\n      └────────────────────────────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The key of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Query",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "\"q\"",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " since it's explicitly given through the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "key",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " optional parameter. The key of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Language",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "\"language\"",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " which",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "was inferred with the help of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "typed_fields",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " since no ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "key",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " was given.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "path_order",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is not really doing anything right now, but will be useful",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "shortly.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The ",
+            "type" : "SimpleText"
+          }, {
+            "code" : ": type a. a Typed_field.t -> a Parser.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " type annotation might be",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "confusing if it's the first time you see it, but the good and bad thing",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "is that it's always the same annotation. The reason that this annotation",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "is needed is because ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "'a Typed_field.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " is a GADT, which results in each",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "of its constructors having different types which can result in weird",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "type errors without the explicit annotation. There are cool internal",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "talks and resources that go over this topic in more detail, but for now,",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "it's totally fine to just always type the same type annotation",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "type a. a Typed_field.t -> a Parser.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ".",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It might be good to have [language] have its own type. We can use",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Parser.project",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " or ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value_parser.project",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to change their types.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    module Language : sig\n      type t [@@deriving sexp, equal]\n\n      val to_string : t -> string\n      val of_string : string -> t\n    end = struct\n      include String\n    end\n\n    type t =\n      { query : string\n      ; language : Language.t\n      }\n    [@@deriving typed_fields, sexp, equal]\n\n    let parser_for_field : type a. a Typed_field.t -> a Parser.t = function\n      | Query -> Parser.from_query_required ~key:\"q\" Value_parser.string\n      | Language ->\n        Parser.from_query_required\n          (Value_parser.project\n             Value_parser.string\n             ~parse_exn:Language.of_string\n             ~unparse:Language.to_string)\n    ;;\n\n    module Path_order = Parser.Record.Path_order (Typed_field)\n\n    let path_order = Path_order.T []\n  end\n\n  let parser = Parser.Record.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n      URL parser looks good!\n      ┌─────────────────────────────────────────┐\n      │ All urls                                │\n      ├─────────────────────────────────────────┤\n      │ /?language=<project<string>>&q=<string> │\n      └─────────────────────────────────────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "We could've also used ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Value_parser.stringable (module Language)",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " as a",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "shorthand for projecting stringable types. On a similar note,",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "Value_parser",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " also provides other primitives like ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "sexpable",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "binable_via_base64",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ", ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "int",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ", ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "float",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ", and others.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Right now, we are taking both fields the query, but you might want to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "design your URL such that users see ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "google.com/en/?q=capybara",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " instead",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "google.com/?language=en&q=capybara",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". Instead of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "from_query_required",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", we can use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "from_path",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    module Language : sig\n      type t [@@deriving sexp, equal]\n\n      val to_string : t -> string\n      val of_string : string -> t\n    end = struct\n      include String\n    end\n\n    type t =\n      { query : string\n      ; language : Language.t\n      }\n    [@@deriving typed_fields, sexp, equal]\n\n    let parser_for_field : type a. a Typed_field.t -> a Parser.t = function\n      | Query -> Parser.from_query_required ~key:\"q\" Value_parser.string\n      | Language ->\n        Parser.from_path\n          (Value_parser.project\n             Value_parser.string\n             ~parse_exn:Language.of_string\n             ~unparse:Language.to_string)\n    ;;\n\n    module Path_order = Parser.Record.Path_order (Typed_field)\n\n    let path_order = Path_order.T []\n  end\n\n  let parser = Parser.Record.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n      Error with parser.\n      ┌────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────┐\n      │ Check name             │ Error message                                                                         │\n      ├────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────┤\n      │ Sane path orders check │ (\"Each path parser must be present in path order. The following fields were missing:\" │\n      │                        │  (missing_fields (Language)))                                                         │\n      └────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We get an error! The reason for this is that, unlike query fields where",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "keys can be parsed and unparsed in any order since it's a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "string list String.Map.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " under the hood, the path is just a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "string list",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " where the order in which you parse things matters. A URL",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "like ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "google.com/search/en",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is different from ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "google.com/en/search",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". If",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "you take multiple fields from the path, then you need to specify the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "order in which they should be parsed and unparsed in.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "check_ok_and_print_urls_or_errors",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " will let you know about any issues",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "statically. Here the problem can be fixed by adding ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Language",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "path_order",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    module Language : sig\n      type t [@@deriving sexp, equal]\n\n      val to_string : t -> string\n      val of_string : string -> t\n    end = struct\n      include String\n    end\n\n    type t =\n      { query : string\n      ; language : Language.t\n      }\n    [@@deriving typed_fields, sexp, equal]\n\n    let parser_for_field : type a. a Typed_field.t -> a Parser.t = function\n      | Query -> Parser.from_query_required ~key:\"q\" Value_parser.string\n      | Language ->\n        Parser.from_path\n          (Value_parser.project\n             Value_parser.string\n             ~parse_exn:Language.of_string\n             ~unparse:Language.to_string)\n    ;;\n\n    module Path_order = Parser.Record.Path_order (Typed_field)\n\n    let path_order = Path_order.T [ Language ]\n  end\n\n  let parser = Parser.Record.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n      URL parser looks good!\n      ┌───────────────────────────────┐\n      │ All urls                      │\n      ├───────────────────────────────┤\n      │ /<project<string>>?q=<string> │\n      └───────────────────────────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Finally, although it's not ergonomic in this example, it's worth",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "mentioning what happens when you nest records.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module Nested = struct\n    type t =\n      { foo : string\n      ; bar : int\n      }\n    [@@deriving typed_fields, sexp, equal]\n\n    let parser_for_field : type a. a Typed_field.t -> a Parser.t = function\n      | Foo -> Parser.from_query_required Value_parser.string\n      | Bar -> Parser.from_query_required Value_parser.int\n    ;;\n\n    module Path_order = Parser.Record.Path_order (Typed_field)\n\n    let path_order = Path_order.T []\n  end\n\n  module Parent = struct\n    type t =\n      { a : Nested.t\n      ; b : Nested.t\n      }\n    [@@deriving typed_fields, equal, sexp]\n\n    let parser_for_field : type a. a Typed_field.t -> a Parser.t = function\n      | A -> Parser.Record.make (module Nested)\n      | B -> Parser.Record.make (module Nested)\n    ;;\n\n    module Path_order = Parser.Record.Path_order (Typed_field)\n\n    let path_order = Path_order.T []\n  end\n\n  let parser = Parser.Record.make (module Parent)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n      URL parser looks good!\n      ┌─────────────────────────────────────────────────────────┐\n      │ All urls                                                │\n      ├─────────────────────────────────────────────────────────┤\n      │ /?a.bar=<int>&a.foo=<string>&b.bar=<int>&b.foo=<string> │\n      └─────────────────────────────────────────────────────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Records nested inside of other records are namespaced on top of each",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "other, but the namespace can be changed/be overridden with the optional",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "parameter ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "~namespace",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " on ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Parser.Record.make",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "id" : "typed-field-parse-unparse-variants",
+        "level" : 2,
+        "title" : "Variants",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "If you want to parse/unparse your URL or a part of your URL as a variant",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "you can use the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Parser.Variant",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " module which needs you to derive",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "typed_variants",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " on your variant type.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    type t =\n      | Homepage\n      | Search\n      | Maps\n    [@@deriving typed_variants, sexp, equal]\n\n    let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n      | Homepage -> Parser.unit\n      | Search -> Parser.unit\n      | Maps -> Parser.unit\n    ;;\n  end\n\n  let parser = Parser.Variant.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n    URL parser looks good!\n    ┌───────────┐\n    │ All urls  │\n    ├───────────┤\n    │ /homepage │\n    │ /maps     │\n    │ /search   │\n    └───────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "Parser.unit",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " is a no-op parser for when you don't need to parse",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "anything. Its type is ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "unit Parser.t",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and is useful when dealing with",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "variant constructors that don't have a payload.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It would be nice if we could express a homepage as ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "google.com/",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " instead",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "google.com/homepage",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    type t =\n      | Homepage\n      | Search\n      | Maps\n    [@@deriving typed_variants, sexp, equal]\n\n    let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n      | Homepage -> Parser.end_of_path Parser.unit\n      | Search -> Parser.unit\n      | Maps -> Parser.unit\n    ;;\n  end\n\n  let parser = Parser.Variant.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n    URL parser looks good!\n    ┌──────────┐\n    │ All urls │\n    ├──────────┤\n    │ /        │\n    │ /maps    │\n    │ /search  │\n    └──────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The path identifiers for ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Maps",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Search",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " were inferred with the help",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "of ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "typed_variants",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ", and the homepage identifier was overridden with",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "end_of_path",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ". When something gets inferred vs when it's overridden can",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "be tricky to reason about, but the way it works is that the \"pattern\" to",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "match will be inferred unless the following combinators are used: -",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "with_remaining_path pattern",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " expects the remaining path to be equal to",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "pattern",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ". - ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "with_prefix pattern",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " expects the remaining path to have",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "code" : "pattern",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " as its prefix. - ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "end_of_path",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " expect the remaining path to be",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "empty.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "It would be nice if we had payload on the URL like",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "google.com/search?query=capybara",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " or",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "google.com/maps?location=New_York",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". This can be accomplished with the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "same combinators that the previous ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Parser.Record",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " example used.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "  module My_google_clone = struct\n    type t =\n      | Homepage\n      | Search of string\n      | Maps of string\n    [@@deriving typed_variants, sexp, equal]\n\n    let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n      | Homepage -> Parser.end_of_path Parser.unit\n      | Search -> Parser.from_query_required ~key:\"query\" Value_parser.string\n      | Maps -> Parser.from_query_required ~key:\"location\" Value_parser.string\n    ;;\n  end\n\n  let parser = Parser.Variant.make (module My_google_clone)\n\n  let%expect_test _ =\n    Parser.check_ok_and_print_urls_or_errors parser;\n    [%expect\n      {|\n    URL parser looks good!\n    ┌─────────────────────────┐\n    │ All urls                │\n    ├─────────────────────────┤\n    │ /                       │\n    │ /maps?location=<string> │\n    │ /search?query=<string>  │\n    └─────────────────────────┘ |}]\n  ;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "id" : "typed-field-parse-unparse-static-checks-on-your-url-parsing-unparsing",
+        "level" : 2,
+        "title" : "Static checks on your url parsing/unparsing",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "Parser.check_ok_and_print_urls_or_errors",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " will check for any",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "ambiguity/weirdness in your parser. You'll also be able to see if the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "urls your site supports changes unexpectedly. The library tends to infer",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "things off of the names of your types. For instance, paths are sometimes",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "inferred from constructor names, but can be overridden with",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "end_of_path",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "with_prefix",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " or ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "with_remaining_path",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". The rules for how",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "this works are specified in the MLI, but it's a lot nicer to explicitly",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "see the shapes of your url in an expect test.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module Ambiguous_url = struct\n  type t =\n    | Foo\n    | Bar\n  [@@deriving typed_variants, sexp, equal]\n\n  let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n    | Foo -> Parser.with_prefix [ \"x\" ] Parser.unit\n    | Bar -> Parser.with_prefix [ \"x\" ] Parser.unit\n  ;;\nend\n\nlet parser = Parser.Variant.make (module Ambiguous_url)\n\nlet%expect_test _ =\n  Parser.check_ok_and_print_urls_or_errors parser;\n  [%expect\n    {|\n    Error with parser.\n    ┌─────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────┐\n    │ Check name                                              │ Error message                                                                            │\n    ├─────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤\n    │ Ambiguous choices for picking variant constructor check │ (\"Duplicate patterns found!\"                                                             │\n    │                                                         │  (duplicate_patterns (((pattern ((Match x))) (needed_match Prefix)))))                   │\n    │ Duplicate urls check                                    │ (\"Ambiguous, duplicate urls expressed in parser! This was probably caused due to conflic │\n    │                                                         │ ting renames with [with_prefix] or [with_remaining_path].\"                               │\n    │                                                         │  (duplicate_urls (/x)))                                                                  │\n    └─────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────┘ |}]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "id" : "typed-field-parse-unparse-no-more-broken-links-in-documents",
+        "level" : 2,
+        "title" : "No more broken links in documents",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "As your site changes, it's likely that your parser will also change,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "which introduces the possibility that old urls no longer parse! Broken",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "urls in your users' documents is not fun, but you can guard against this",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "by using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Versioned_parser",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to \"stabilize\" them.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module V1 = struct\n  type t = Foo of string [@@deriving typed_variants, sexp, equal]\n\n  let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n    | Foo -> Parser.from_path Value_parser.string\n  ;;\nend\n\nlet v1_parser = Versioned_parser.first_parser (Parser.Variant.make (module V1))\n\nmodule V2 = struct\n  type t = New_foo of string [@@deriving typed_variants, sexp, equal]\n\n  let parser_for_variant : type a. a Typed_variant.t -> a Parser.t = function\n    | New_foo -> Parser.from_path Value_parser.string\n  ;;\nend\n\nlet v2_parser =\n  Versioned_parser.new_parser\n    (Parser.Variant.make (module V2))\n    ~previous:v1_parser\n    ~f:(function\n      | Foo s -> New_foo s)\n;;\n\nlet%expect_test _ =\n  Versioned_parser.check_ok_and_print_urls_or_errors v2_parser;\n  [%expect\n    {|\n    URL parser looks good!\n    ┌───────────────────┐\n    │ All urls          │\n    ├───────────────────┤\n    │ /new_foo/<string> │\n    └───────────────────┘\n\n           |\n    falls back to\n           |\n           v\n\n    URL parser looks good!\n    ┌───────────────┐\n    │ All urls      │\n    ├───────────────┤\n    │ /foo/<string> │\n    └───────────────┘ |}]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "If you're migrating your site from the non-typed URL var into the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Typed",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " version of the API, then you cannot use",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Versioned_parser.first_parser",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " since you won't already have a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Typed.Parser",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". But no worries! You can use",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Versioned_parsed.of_non_typed_parser",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " instead of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Versioned_parser.first_parser",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "id" : "typed-field-parse-unparse-more-resources",
+        "level" : 2,
+        "title" : "More resources",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The MLI is quite long, so here are some pointers to save you time!",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : true,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "I want my URL type to be a record!",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " -> You should look for",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "Typed.Record.make",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " in the MLI/demo page.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "I want my URL to take things from the path (e.g. \"/profile/capybara_lover123\" or   \"/profile/chinchilla_was_taken\" or \"profile/<string>\")",
+              "type" : "InlinedCode"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "-> You can use ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Parser.from_path",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " and ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Parser.from_remaining_path",
+              "type" : "InlinedCode"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "for the \"variable parts\" of the path and ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "with_prefix",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " and",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "with_remaining_path",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " for the \"constant\" parts. Examples are in demo",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "page + better explanation in MLI.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "I want my URL type to be made up of something other than the provided primitives!",
+              "type" : "InlinedCode"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "-> ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Value_parser.project",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " or ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Parser.project",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " should do the trick!",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "What are all the provided primitives??",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " -> These primitives are",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "located and documented in ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "Value_parser",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ".",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "What order do the parsers/unparsers run?",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " -> Preorder-like order.",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "Records' fields are weirder since the order you parse the record's",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "fields might lead to different results, you can specify the order",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "through ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "path_order",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ".",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "code" : "I want my [Value_parser] to recover from failure.",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " -> You can use",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "Value_parser.fallback",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " to provide a default value to use when the",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "parser fails.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695640585140,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "URL Routing",
+      "pageMeta" : {
+        "title" : [ "URL Routing" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "10-url-routing",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Handwritten Parse / Unparse",
+        "id" : "handwritten-parse-unparse"
+      }, {
+        "title" : "Typed field Parse / Unparse",
+        "id" : "typed-field-parse-unparse"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

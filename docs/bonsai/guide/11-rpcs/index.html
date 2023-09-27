@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: RPCs</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Example 1: Doubling a number</h1></header>
+<p>Historically, the recommended structure of a web app that sends RPCs was something like this:Use persistent_connection to establish a connection the server and client can use to communicate. Thread that connection as an argument through the whole codebase so that RPCs can be dispatched directly from anywhere. By threading the connection as an argument instead of always referencing a global connection value, we can pass in a different connection for testing purposes; otherwise test code would have to spin up a server process, which would add an unfortunate amount of non-determinism and awkwardness to each test. The Rpc_effect module adds a couple refinements to make this approach more ergonomic:Instead of explicitly threading the connection through the whole app, Rpc_effect uses a dynamic-scoping construct built into Bonsai that allows code to pull the connection &quot;out of thin air&quot;. This reduces parameter-passing noise, at the cost of some extra noise anytime something dispatches an RPC. The module will create connections for you, which reduces the typical app setup boilerplate. Bonsai_web_test.Handle.create optionally accepts a set of RPC implementations, thus eliminating the boilerplate of setting up a connection that works in tests. In this example, we will build the UI shown below. It has a button that sends the current number as an RPC query and sets the number to whatever number is in the response that comes back.The first step is to define an RPC that is shared between the server and client code. ocaml let double_rpc = Rpc.Rpc.create ~name:&quot;double&quot; ~version:0 ~bin_query:[%bin_type_class: int] ~bin_response:[%bin_type_class: int] ;; Next, we provide the server's implementation of the RPC. ocaml let double_implementation = Rpc.Rpc.implement' double_rpc (fun _connection_state query -&gt; Int.max 1 (query * 2)) ;; On the client side, we start by picking a server to send our RPCs to. Most users will pick Self , which causes RPCs to be sent to the same server hosting the web page itself. ocaml let where_to_connect : Rpc_effect.Where_to_connect.t = Self Finally, we can build the client side of the app. ocaml let app = let%sub dispatch_double_rpc = Rpc_effect.Rpc.dispatcher double_rpc ~where_to_connect in let%sub number, set_number = Bonsai.state ~equal:[%equal: int] 1 in let%arr dispatch_double_rpc = dispatch_double_rpc and number = number and set_number = set_number in Vdom.Node.div [ Vdom.Node.div [ Vdom.Node.text [%string &quot;The number is: %{number#Int}&quot;] ] ; Vdom.Node.button ~attrs: [ Vdom.Attr.on_click (fun _ -&gt; match%bind.Effect dispatch_double_rpc number with | Ok doubled_number -&gt; set_number doubled_number | Error error -&gt; Effect.of_sync_fun eprint_s [%sexp (error : Error.t)]) ] [ Vdom.Node.text &quot;Double the number&quot; ] ] ;; The one line worth highlighting is the one that makes the RPC-dispatching effect. ocaml skip let%sub dispatch_double_rpc = Rpc_effect.Rpc.dispatcher Protocol.double ~where_to_connect in This does not by itself dispatch an RPC; rather, it merely produces a 'query -&gt; 'response Effect.t function that will do the dispatching.</p>
+</article>
+
+<article>
+<header><h1>Polling State RPC</h1></header>
+<p>Bonsai apps often use a library called polling_state_rpc whenever they want to keep up to date with a source of data. The library provides a similar abstraction to the Pipe_rpc or State_rpc modules that come built into async_rpc_kernel , but with tradeoffs that are more suitable for web clients.Both Pipe_rpc and State_rpc operate by pushing streams of updates through the connection; the client can then consume this stream of events as appropriate. This approach works great if the client is able to keep up with the stream of events, as is often the case with native programs. However, web clients are interesting in that they frequently get backgrounded; if the user switches away from a browser tab, the Bonsai rendering loop, which relies on the browser's requestAnimationFrame function, slows down to a crawl. If the app uses State_rpc , then when the tab eventually comes back to the foreground, it might have a large queue of events, which will cause it to freeze while it catches up.The polling_state_rpc library solves this problem by having the client say when it is ready for more data by explicitly requesting updates from the server. This allows the server to give the client a condensed view of everything that happened since the last time it requested data.</p>
+</article>
+
+<article>
+<header><h1>Example 2: Display the current time</h1></header>
+<p>This next example will build a UI that monitors the current time reported by the server, in order to provide a concrete example of using the polling_state_rpc library.Ten times a second, the client sends the timezone text as a poll query to the server, to which it responds with the current time formatted in the specified zone. Ordinarily the form would be more structured so that the user can't accidentally send the server an invalid form; however, this UI does nothing of the sort, in order to illustrate how error handling might work.As in the previous example, we will begin by setting up the RPC definition. The point of interest in this case is that we must provide a module for the response type that satisfies the Diffable.S module type (from the diffable library). ocaml module Current_time = struct include String include Diffable.Atomic.Make (String) end let current_time_rpc = Polling_state_rpc.create ~name:&quot;current_time&quot; ~version:0 ~query_equal:[%equal: string] ~bin_query:[%bin_type_class: string] (module Current_time) ;; Next we provide a server implementation. A call to Rpc.Implementation.lift is common because the implementation you get from Polling_state_rpc.implement requires a 'a * Rpc.Connection.t connection state. ocaml let current_time_implementation = Polling_state_rpc.implement ~on_client_and_server_out_of_sync:print_s current_time_rpc (fun _connection_state zone -&gt; Deferred.return (Time_ns.to_string_trimmed ~zone:(Timezone.of_string zone) (Time_ns.now ()))) |&gt; Rpc.Implementation.lift ~f:(fun connection_state -&gt; connection_state, connection_state) ;; Finally, we can write the UI code. There are a couple important ways in which this example is different from the previous one:Rather than explicitly dispatching the RPC, we merely instantiate the poller computation and allow it to send requests as necessary. It sends requests whenever the query (the timezone) changes, and also at fixed intervals (every tenth of a second). Rather than having to dispatch the RPC to get the response or an error, we get a couple constantly available values: last_ok_response and last_error . Each of those values comes packaged with the query it was a response to, since it might lag slightly behind the most up-to-date query. The code omits the implementation of zone_form , since that is not our focus in this chapter. ocaml let app = let%sub zone, zone_view = zone_form in let%sub { last_ok_response; last_error; inflight_query = _; refresh = _ } = Rpc_effect.Polling_state_rpc.poll current_time_rpc ~equal_query:[%equal: string] ~equal_response:[%equal: Current_time.t] ~where_to_connect ~every:(Time_ns.Span.of_sec 0.1) zone in let%arr last_ok_response = last_ok_response and last_error = last_error and zone_view = zone_view in let text = match last_ok_response with | Some (zone, current_time) -&gt; [%string &quot;The current time in the zone '%{zone}' is %{current_time}&quot;] | None -&gt; &quot;Loading...&quot; in let error_view = match last_error with | Some (zone, error) -&gt; Vdom.Node.div ~attrs:[ Css.error_text ] [ Vdom.Node.text [%string &quot;Got error when requesting time in zone '%{zone}'&quot;] ; Vdom.Node.pre [ Vdom.Node.text (Error.to_string_hum error) ] ] | None -&gt; Vdom.Node.none in Vdom.Node.div [ zone_view; Vdom.Node.div [ Vdom.Node.text text ]; error_view ] ;;</p>
+</article>
+
+<article>
+<header><h1>Example 3: Testing a component that sends RPCs</h1></header>
+<p>Let us return to the &quot;number doubler&quot; that we built in the first example. In this section we will build some tests for that component. Using knowledge from the testing chapter of the guide, our first attempt might look like the code below. ocaml let%expect_test &quot;Clicking the button should double the number&quot; = let handle = Handle.create (Result_spec.vdom Fn.id) app in Handle.show handle; [%expect {| &lt;div&gt; &lt;div&gt; The number is: 1 &lt;/div&gt; &lt;button onclick&gt; Double the number &lt;/button&gt; &lt;/div&gt; |}]; Handle.click_on handle ~get_vdom:Fn.id ~selector:&quot;button&quot;; Handle.show handle; [%expect {| &lt;div&gt; &lt;div&gt; The number is: 1 &lt;/div&gt; &lt;button onclick&gt; Double the number &lt;/button&gt; &lt;/div&gt; |}] ;; Sadly, it isn't this simple. The first reason is that since RPCs are dispatched asynchronously, the test must itself be async. Native tests would accomplish this by adding open Async at the top of the test file, but since we're running in javascript, we have to use a different library. ocaml open Async_kernel open Async_js_test Here's what our attempt looks like now. In addition to the above module imports, we also use Async_kernel_scheduler.yield_until_no_jobs_remain to force any pending side-effects to happen before the test quits. If we don't include that call, the output still gets printed, but after the return () , which means the test doesn't typecheck. ocaml let%expect_test &quot;Clicking the button should double the number&quot; = let handle = Handle.create (Result_spec.vdom Fn.id) app in Handle.show handle; [%expect {| &lt;div&gt; &lt;div&gt; The number is: 1 &lt;/div&gt; &lt;button onclick&gt; Double the number &lt;/button&gt; &lt;/div&gt; |}]; Handle.click_on handle ~get_vdom:Fn.id ~selector:&quot;button&quot;; Handle.show handle; [%expect {| &lt;div&gt; &lt;div&gt; The number is: 1 &lt;/div&gt; &lt;button onclick&gt; Double the number &lt;/button&gt; &lt;/div&gt; |}]; let%bind () = Async_kernel_scheduler.yield_until_no_jobs_remain () in [%expect {| &quot;RPC not handled because no connector has been provided.&quot; |}]; return () ;; We're close, but we need to provide an implementation for the RPC that the button tried to invoke. Thankfully, double_implementation from earlier is still lying around, so we can simply use that. (In some apps you might want to include a mock implementation that differs from the real one.) We should also yield to the scheduler before showing the output, so that we can see the effect of the RPC completing. ocaml let%expect_test &quot;Clicking the button should double the number&quot; = let handle = Handle.create ~rpc_implementations:[ double_implementation ] (Result_spec.vdom Fn.id) app in Handle.show handle; [%expect {| &lt;div&gt; &lt;div&gt; The number is: 1 &lt;/div&gt; &lt;button onclick&gt; Double the number &lt;/button&gt; &lt;/div&gt; |}]; Handle.click_on handle ~get_vdom:Fn.id ~selector:&quot;button&quot;; let%bind () = Async_kernel_scheduler.yield_until_no_jobs_remain () in Handle.show handle; [%expect {| &lt;div&gt; &lt;div&gt; The number is: 2 &lt;/div&gt; &lt;button onclick&gt; Double the number &lt;/button&gt; &lt;/div&gt; |}]; return () ;; Hurrah! This test successfully demonstrates the effect of clicking the button. There are a lot more tricky things about asynchronous testing that this chapter could cover, but we've opted to stop here. Admittedly, the tools for testing with RPCs are still in their infancy, so if you have ideas about how to make writing these tests easier, let us know.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "Historically, the recommended structure of a web app that sends RPCs was",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "something like this:",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "delimiter" : ".",
+      "startNumber" : 1,
+      "type" : "OrderedList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Use ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "persistent_connection",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " to establish a connection the server and",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "client can use to communicate.",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Thread that connection as an argument through the whole codebase so",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "that RPCs can be dispatched directly from anywhere. By threading the",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "connection as an argument instead of always referencing a global",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "connection value, we can pass in a different connection for testing",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "purposes; otherwise test code would have to spin up a server",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "process, which would add an unfortunate amount of non-determinism",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "and awkwardness to each test.",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "The ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Rpc_effect",
+        "type" : "InlinedCode"
+      }, {
+        "text" : " module adds a couple refinements to make this approach",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "more ergonomic:",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "delimiter" : ".",
+      "startNumber" : 3,
+      "type" : "OrderedList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Instead of explicitly threading the connection through the whole",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "app, ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Rpc_effect",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " uses a dynamic-scoping construct built into Bonsai",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "that allows code to pull the connection \"out of thin air\". This",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "reduces parameter-passing noise, at the cost of some extra noise",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "anytime something dispatches an RPC.",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "The module will create connections for you, which reduces the",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "typical app setup boilerplate.",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "Bonsai_web_test.Handle.create",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " optionally accepts a set of RPC",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "implementations, thus eliminating the boilerplate of setting up a",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "connection that works in tests.",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "id" : "example-1-doubling-a-number",
+      "title" : "Example 1: Doubling a number",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In this example, we will build the UI shown below. It has a button that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "sends the current number as an RPC query and sets the number to whatever",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "number is in the response that comes back.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "src" : "/bonsai/bonsai-build/#double-the-number-rpc",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The first step is to define an RPC that is shared between the server and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "client code.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let double_rpc =\n  Rpc.Rpc.create\n    ~name:\"double\"\n    ~version:0\n    ~bin_query:[%bin_type_class: int]\n    ~bin_response:[%bin_type_class: int]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Next, we provide the server's implementation of the RPC.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let double_implementation =\n  Rpc.Rpc.implement' double_rpc (fun _connection_state query -> Int.max 1 (query * 2))\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "On the client side, we start by picking a server to send our RPCs to.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Most users will pick ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Self",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which causes RPCs to be sent to the same",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "server hosting the web page itself.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let where_to_connect : Rpc_effect.Where_to_connect.t = Self\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Finally, we can build the client side of the app.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let app =\n  let%sub dispatch_double_rpc = Rpc_effect.Rpc.dispatcher double_rpc ~where_to_connect in\n  let%sub number, set_number = Bonsai.state ~equal:[%equal: int] 1 in\n  let%arr dispatch_double_rpc = dispatch_double_rpc\n  and number = number\n  and set_number = set_number in\n  Vdom.Node.div\n    [ Vdom.Node.div [ Vdom.Node.text [%string \"The number is: %{number#Int}\"] ]\n    ; Vdom.Node.button\n        ~attrs:\n          [ Vdom.Attr.on_click (fun _ ->\n              match%bind.Effect dispatch_double_rpc number with\n              | Ok doubled_number -> set_number doubled_number\n              | Error error -> Effect.of_sync_fun eprint_s [%sexp (error : Error.t)])\n          ]\n        [ Vdom.Node.text \"Double the number\" ]\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The one line worth highlighting is the one that makes the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "RPC-dispatching effect.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "ocaml skip let%sub dispatch_double_rpc = Rpc_effect.Rpc.dispatcher Protocol.double ~where_to_connect in",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This does not by itself dispatch an RPC; rather, it merely produces a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "'query -> 'response Effect.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " function that will do the dispatching.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "polling-state-rpc",
+      "title" : "Polling State RPC",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Bonsai apps often use a library called ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "polling_state_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " whenever they",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "want to keep up to date with a source of data. The library provides a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "similar abstraction to the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Pipe_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " or ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "State_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " modules that come",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "built into ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "async_rpc_kernel",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", but with tradeoffs that are more suitable",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "for web clients.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Both ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Pipe_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "State_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " operate by pushing streams of updates",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "through the connection; the client can then consume this stream of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "events as appropriate. This approach works great if the client is able",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "to keep up with the stream of events, as is often the case with native",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "programs. However, web clients are interesting in that they frequently",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "get backgrounded; if the user switches away from a browser tab, the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Bonsai rendering loop, which relies on the browser's",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "requestAnimationFrame",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " function, slows down to a crawl. If the app uses",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "State_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", then when the tab eventually comes back to the foreground,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "it might have a large queue of events, which will cause it to freeze",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "while it catches up.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "polling_state_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library solves this problem by having the client",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "say when it is ready for more data by explicitly requesting updates from",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the server. This allows the server to give the client a condensed view",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of everything that happened since the last time it requested data.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "example-2-display-the-current-time",
+      "title" : "Example 2: Display the current time",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This next example will build a UI that monitors the current time",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "reported by the server, in order to provide a concrete example of using",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "polling_state_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "src" : "/bonsai/bonsai-build/#poll-the-current-time",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Ten times a second, the client sends the timezone text as a poll query",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "to the server, to which it responds with the current time formatted in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the specified zone. Ordinarily the form would be more structured so that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the user can't accidentally send the server an invalid form; however,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "this UI does nothing of the sort, in order to illustrate how error",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "handling might work.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "As in the previous example, we will begin by setting up the RPC",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "definition. The point of interest in this case is that we must provide a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "module for the response type that satisfies the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Diffable.S",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " module type",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "(from the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "diffable",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library).",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "module Current_time = struct\n  include String\n  include Diffable.Atomic.Make (String)\nend\n\nlet current_time_rpc =\n  Polling_state_rpc.create\n    ~name:\"current_time\"\n    ~version:0\n    ~query_equal:[%equal: string]\n    ~bin_query:[%bin_type_class: string]\n    (module Current_time)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Next we provide a server implementation. A call to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Rpc.Implementation.lift",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is common because the implementation you get",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "from ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Polling_state_rpc.implement",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " requires a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a * Rpc.Connection.t",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "connection state.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let current_time_implementation =\n  Polling_state_rpc.implement\n    ~on_client_and_server_out_of_sync:print_s\n    current_time_rpc\n    (fun _connection_state zone ->\n       Deferred.return\n         (Time_ns.to_string_trimmed ~zone:(Timezone.of_string zone) (Time_ns.now ())))\n  |> Rpc.Implementation.lift ~f:(fun connection_state ->\n    connection_state, connection_state)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Finally, we can write the UI code. There are a couple important ways in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "which this example is different from the previous one:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : false,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Rather than explicitly dispatching the RPC, we merely instantiate",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "the poller computation and allow it to send requests as necessary.",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "It sends requests whenever the query (the timezone) changes, and",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "also at fixed intervals (every tenth of a second).",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Rather than having to dispatch the RPC to get the response or an",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "error, we get a couple constantly available values:",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "code" : "last_ok_response",
+              "type" : "InlinedCode"
+            }, {
+              "text" : " and ",
+              "type" : "SimpleText"
+            }, {
+              "code" : "last_error",
+              "type" : "InlinedCode"
+            }, {
+              "text" : ". Each of those values comes",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "packaged with the query it was a response to, since it might lag",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "slightly behind the most up-to-date query.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The code omits the implementation of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "zone_form",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", since that is not our",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "focus in this chapter.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let app =\n  let%sub zone, zone_view = zone_form in\n  let%sub { last_ok_response; last_error; inflight_query = _; refresh = _ } =\n    Rpc_effect.Polling_state_rpc.poll\n      current_time_rpc\n      ~equal_query:[%equal: string]\n      ~equal_response:[%equal: Current_time.t]\n      ~where_to_connect\n      ~every:(Time_ns.Span.of_sec 0.1)\n      zone\n  in\n  let%arr last_ok_response = last_ok_response\n  and last_error = last_error\n  and zone_view = zone_view in\n  let text =\n    match last_ok_response with\n    | Some (zone, current_time) ->\n      [%string \"The current time in the zone '%{zone}' is %{current_time}\"]\n    | None -> \"Loading...\"\n  in\n  let error_view =\n    match last_error with\n    | Some (zone, error) ->\n      Vdom.Node.div\n        ~attrs:[ Css.error_text ]\n        [ Vdom.Node.text [%string \"Got error when requesting time in zone '%{zone}'\"]\n        ; Vdom.Node.pre [ Vdom.Node.text (Error.to_string_hum error) ]\n        ]\n    | None -> Vdom.Node.none\n  in\n  Vdom.Node.div [ zone_view; Vdom.Node.div [ Vdom.Node.text text ]; error_view ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      } ]
+    }, {
+      "id" : "example-3-testing-a-component-that-sends-rpcs",
+      "title" : "Example 3: Testing a component that sends RPCs",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Let us return to the \"number doubler\" that we built in the first",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "example. In this section we will build some tests for that component.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Using knowledge from the testing chapter of the guide, our first attempt",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "might look like the code below.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let%expect_test \"Clicking the button should double the number\" =\n  let handle = Handle.create (Result_spec.vdom Fn.id) app in\n  Handle.show handle;\n  [%expect\n    {|\n    <div>\n      <div> The number is: 1 </div>\n      <button onclick> Double the number </button>\n    </div> |}];\n  Handle.click_on handle ~get_vdom:Fn.id ~selector:\"button\";\n  Handle.show handle;\n  [%expect\n    {|\n    <div>\n      <div> The number is: 1 </div>\n      <button onclick> Double the number </button>\n    </div> |}]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Sadly, it isn't this simple. The first reason is that since RPCs are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "dispatched asynchronously, the test must itself be async. Native tests",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "would accomplish this by adding ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "open Async",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " at the top of the test",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "file, but since we're running in javascript, we have to use a different",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "library.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "open Async_kernel\nopen Async_js_test\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Here's what our attempt looks like now. In addition to the above module",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "imports, we also use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Async_kernel_scheduler.yield_until_no_jobs_remain",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "to force any pending side-effects to happen before the test quits. If we",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "don't include that call, the output still gets printed, but after the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "return ()",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which means the test doesn't typecheck.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let%expect_test \"Clicking the button should double the number\" =\n  let handle = Handle.create (Result_spec.vdom Fn.id) app in\n  Handle.show handle;\n  [%expect\n    {|\n    <div>\n      <div> The number is: 1 </div>\n      <button onclick> Double the number </button>\n    </div> |}];\n  Handle.click_on handle ~get_vdom:Fn.id ~selector:\"button\";\n  Handle.show handle;\n  [%expect\n    {|\n    <div>\n      <div> The number is: 1 </div>\n      <button onclick> Double the number </button>\n    </div> |}];\n  let%bind () = Async_kernel_scheduler.yield_until_no_jobs_remain () in\n  [%expect {| \"RPC not handled because no connector has been provided.\" |}];\n  return ()\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We're close, but we need to provide an implementation for the RPC that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the button tried to invoke. Thankfully, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "double_implementation",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " from",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "earlier is still lying around, so we can simply use that. (In some apps",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "you might want to include a mock implementation that differs from the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "real one.) We should also yield to the scheduler ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "before",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " showing the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "output, so that we can see the effect of the RPC completing.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let%expect_test \"Clicking the button should double the number\" =\n  let handle =\n    Handle.create\n      ~rpc_implementations:[ double_implementation ]\n      (Result_spec.vdom Fn.id)\n      app\n  in\n  Handle.show handle;\n  [%expect\n    {|\n    <div>\n      <div> The number is: 1 </div>\n      <button onclick> Double the number </button>\n    </div> |}];\n  Handle.click_on handle ~get_vdom:Fn.id ~selector:\"button\";\n  let%bind () = Async_kernel_scheduler.yield_until_no_jobs_remain () in\n  Handle.show handle;\n  [%expect\n    {|\n    <div>\n      <div> The number is: 2 </div>\n      <button onclick> Double the number </button>\n    </div> |}];\n  return ()\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Hurrah! This test successfully demonstrates the effect of clicking the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "button.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "There are a lot more tricky things about asynchronous testing that this",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "chapter could cover, but we've opted to stop here. Admittedly, the tools",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "for testing with RPCs are still in their infancy, so if you have ideas",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "about how to make writing these tests easier, let us know.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814062129,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "RPCs",
+      "pageMeta" : {
+        "title" : [ "RPCs" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "11-rpcs",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Example 1: Doubling a number",
+        "id" : "example-1-doubling-a-number"
+      }, {
+        "title" : "Polling State RPC",
+        "id" : "polling-state-rpc"
+      }, {
+        "title" : "Example 2: Display the current time",
+        "id" : "example-2-display-the-current-time"
+      }, {
+        "title" : "Example 3: Testing a component that sends RPCs",
+        "id" : "example-3-testing-a-component-that-sends-rpcs"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

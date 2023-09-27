@@ -1,0 +1,10 @@
+{
+  "viewOn" : {
+    "link" : "your-custom-base-url",
+    "title" : "View On GitHub"
+  },
+  "id" : "bonsai",
+  "title" : "Bonsai",
+  "type" : "Guide",
+  "previewEnabled" : false
+}

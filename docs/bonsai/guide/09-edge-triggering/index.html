@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Edge Triggering</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>after_display</h1></header>
+<p>Bonsai encourages declarative UI construction. A computation is defined as a list of dependencies and a function which reads the current value of those dependencies, producing a new value. A computation defined in this way doesn't care what the previous values of its dependencies were; it always operates on their current value.However, sometimes it can be helpful to witness a transition from one value to another. In Bonsai, we have the https://ocaml.org/p/bonsai/v0.15.0/doc/Bonsai/Edge/index.html Bonsai.Edge module, which has a collection of functions which can notice things likethe passage of time the activation and deactivation of components changing of the contents of a Value.t and schedule Effects when they occur.The main Edge function we'll take a look at is Bonsai.Edge.lifecycle , which takes a number of optional parameters of type unit Effect.t Value.t . The first of these is after_display . Edge.lifecycle schedules the effect passed in via after_display as the last operation in the Bonsai render-loop, right after the DOM has been updated. ocaml let frame_counter = let%sub frames, set_frames = Bonsai.state 0 in let%sub () = Bonsai.Edge.lifecycle ~after_display: (let%map frames = frames and set_frames = set_frames in set_frames (frames + 1)) () in let%arr frames = frames in Vdom.Node.textf &quot;this component has been alive for %d frames&quot; frames ;; The text I chose for that component was very intentional. I wrote &quot;this component has been alive for {n} frames&quot; instead of &quot;the application has been running for {n} frames&quot;. This is because Edge functions only run if their computation is active. Let's start with a demo, and then discuss what &quot;active&quot; means. ocaml let frame_toggler = let%sub showing, set_showing = Bonsai.state false in let%sub output = match%sub showing with | true -&gt; frame_counter | false -&gt; Bonsai.const Vdom.Node.none in let%arr showing = showing and set_showing = set_showing and output = output in let toggle_showing = set_showing (not showing) in let button_text = if showing then &quot;disable counter&quot; else &quot;enable counter&quot; in let toggle_button = Vdom.Node.button ~attrs:[ Vdom.Attr.on_click (fun _ -&gt; toggle_showing) ] [ Vdom.Node.text button_text ] in Vdom.Node.div [ toggle_button; output ] ;; If you disable the component (wait a few seconds), you'll notice that the counter picks up where it left off rather than continuing in the background.As mentioned earlier, after_display only runs when the computation is &quot;active&quot;, and as this example demonstrates, being inside of a match%sub is one way to change the activity status of a computation.In fact, aside from match%sub , there's only one other combinator that influences the active status: Bonsai.assoc . Technically, if%sub and Bonsai.enum_ also have this property, but in reality, if%sub and match%sub are implemented in terms of enum_ , so they're all counted together. Bonsai.assoc is used to build a dynamic number of instances of a computation.Just like how ocaml let%sub a = my_component in let%sub b = my_component in will create two distinct instances of my_component , each with their own state, Bonsai.assoc can instantiate a dynamic number of computations, one instantiation per key-value pair from an incoming _ Map.t Value.t .I have a small library, https://ocaml.org/p/bonsai/v0.15.0/doc/Bonsai_web_ui_extendy/index.html Bonsai_web_ui_extendy, which uses assoc to implement a component for easily creating and deleting instances of another component.We'll reuse the frame_counter component built in the first example, and combine it with extendy to get multiple frame_counter s.Let's see it in use: &lt;!-- $MDX file=../../examples/bonsai_guide_code/edge_examples.ml,part=extendy-use --&gt; {=html} ocaml let wrap_remove frame_counter remove = let x_button = Vdom.Node.button ~attrs:[ Vdom.Attr.on_click (fun _ -&gt; remove) ] [ Vdom.Node.text &quot;x&quot; ] in Vdom.Node.div [ x_button; frame_counter ] ;; let many_frame_watches = let%sub { contents; append; _ } = extendy frame_counter ~wrap_remove in let%arr contents = contents and append = append in let append_button = Vdom.Node.button ~attrs:[ Vdom.Attr.on_click (fun _ -&gt; append) ] [ Vdom.Node.text &quot;add&quot; ] in Vdom.Node.div (append_button :: Map.data contents) ;; By clicking on the &quot;add&quot; button, we create multiple frame-counters, each with their own state, each which began counting at the moment of their creation. It might not be obvious, but clicking on the x button not only removes the component from the view, but from the entire Bonsai computation graph, so the on_display effect is also stopped entirely.</p>
+</article>
+
+<article>
+<header><h1>on_activate / on_deactivate</h1></header>
+<p>The other two optional parameters to Bonsai.Edge.lifecycle are on_activate and on_deactivate , both of which share the same type as after_display : unit Effect.t Value.t . These effects are run whenever the lifecycle computation becomes active or inactive. By incorporating a lifecycle computation into a component of yours, the on_activate / on_deactivate callbacks are effectively measuring the activation/deactivation of the containing component. Let's modify the lifecycle component to use these new functions. First, though, we'll want to do something when the activation/deactivation occurs. For that, I built a tiny logging component which will let me append a list of strings sent by the frame_counter component.Ok, on to the extension of frame_counter : ocaml let frame_counter (log : (string -&gt; unit Ui_effect.t) Value.t) = let%sub frames, set_frames = Bonsai.state 0 in let%sub () = Bonsai.Edge.lifecycle ~on_activate: (let%map log = log in log &quot;🚀&quot;) ~on_deactivate: (let%map log = log in log &quot;🔥&quot;) ~after_display: (let%map frames = frames and set_frames = set_frames in set_frames (frames + 1)) () in let%arr frames = frames in Vdom.Node.textf &quot;this component has been alive for %d frames&quot; frames ;; If you don't like the look of ocaml let%map log = log in log &quot;🔥&quot; you could also write it as ocaml log &gt;&gt;| Fn.( |&gt; ) &quot;🔥&quot; &lt;br/&gt; {=html} Please don't though # on_change With the `lifecycle` function as a primitive, we can implement other useful edge-triggering functions. One of these is also included in the `Bonsai.Edge` module: `on_change'`. `on_change'` monitors a `'a Value.t`, and when that value changes, it calls a user-provided function, giving that function both the previous and current value. This user-provided function returns an `Effect.t`, which will be scheduled whenever the value changes. ``````attention-note You currently have all the tools to implement `on_change'` yourself, and you can find the implementation [here](https://github.com/janestreet/bonsai/blob/master/src/proc.ml#L832). Combining the counter-component from ./03-state.md Chapter 3 and the logging component that I used above, we can write a component which contains both a counter and a log, where the log is updated when the value changes. ocaml let logging_counter = let%sub log_view, log = logger in let%sub counter_view, counter = counter in let%sub () = let callback = let%map log = log in fun prev cur -&gt; match prev with | None -&gt; Ui_effect.Ignore | Some prev -&gt; log (if prev &lt; cur then &quot;🚀&quot; else &quot;🔥&quot;) in Bonsai.Edge.on_change' ~sexp_of_model:[%sexp_of: Int.t] ~equal:[%equal: Int.t] counter ~callback in let%arr log_view = log_view and counter_view = counter_view in Vdom.Node.div [ counter_view; log_view ] ;; Implications for intelligibility and testing Declarative programs are easy to reason about and test. Extensive use of the Edge module will make your program less and less declarative.Every time that you have the opportunity, you should opt for using anything other than an Edge.* function.However, sometimes it's necessary, and we have testing helpers to make your life a bit easier when you do use edge triggering. Because after_display runs its effect, well, after the display has occurred, how would this interact with Bonsai testing functions, like Handle.show ?To demonstrate, we'll build an awful Bonsai component: a linear chain of on_changes : ocaml let chain_computation = let%sub a = Bonsai.const &quot;x&quot; in let%sub b, set_b = Bonsai.state &quot; &quot; ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t] in let%sub c, set_c = Bonsai.state &quot; &quot; ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t] in let%sub d, set_d = Bonsai.state &quot; &quot; ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t] in let%sub () = Bonsai.Edge.on_change ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t] a ~callback:set_b in let%sub () = Bonsai.Edge.on_change ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t] b ~callback:set_c in let%sub () = Bonsai.Edge.on_change ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t] c ~callback:set_d in return (Value.map4 a b c d ~f:(sprintf &quot;a:%s b:%s c:%s d:%s&quot;)) ;; Because on_change triggers at the end of each frame, it should take 4 frames to settle. And indeed, in a unit test, that's exactly what we'll see: ocaml let%expect_test &quot;chained on_change&quot; = let handle = Handle.create (Result_spec.string (module String)) chain_computation in Handle.show handle; [%expect {| a:x b: c: d: |}]; Handle.show handle; [%expect {| a:x b:x c: d: |}]; Handle.show handle; [%expect {| a:x b:x c:x d: |}]; Handle.show handle; [%expect {| a:x b:x c:x d:x |}]; Handle.show handle; [%expect {| a:x b:x c:x d:x |}] ;; But Bonsai_web_test.Handle has a function that makes this a bit nicer: recompute_view_until_stable , so we can rewrite the test in a way that skips all the intermediate frames: ocaml let%expect_test &quot;chained on_change with recompute_view_until_stable&quot; = let handle = Handle.create (Result_spec.string (module String)) chain_computation in Handle.recompute_view_until_stable handle; Handle.show handle; [%expect {| a:x b:x c:x d:x |}] ;; recompute_view_until_stable is handy, but it's hiding intermediate states. If those intermediate states allow for logical bugs in your application, then you might miss them. As mentioned above: avoid Edge if you can; it's a sharp tool.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "Bonsai encourages declarative UI construction. A computation is defined",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "as a list of dependencies and a function which reads the current value",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "of those dependencies, producing a new value. A computation defined in",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "this way doesn't care what the previous values of its dependencies were;",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "it always operates on their current value.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "However, sometimes it can be helpful to witness a transition from one",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "value to another. In Bonsai, we have the",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "url" : "https://ocaml.org/p/bonsai/v0.15.0/doc/Bonsai/Edge/index.html",
+        "isFile" : false,
+        "type" : "Link",
+        "content" : [ {
+          "code" : "Bonsai.Edge",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "module, which has a collection of functions which can notice things like",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "delimiter" : ".",
+      "startNumber" : 1,
+      "type" : "OrderedList",
+      "content" : [ {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "the passage of time",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "the activation and deactivation of components",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      }, {
+        "type" : "ListItem",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "changing of the contents of a Value.t",
+            "type" : "SimpleText"
+          } ]
+        } ]
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "and schedule Effects when they occur.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "id" : "after_display",
+      "title" : "after_display",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The main ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Edge",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " function we'll take a look at is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Bonsai.Edge.lifecycle",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", which takes a number of optional parameters of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "unit Effect.t Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". The first of these is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "after_display",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Edge.lifecycle",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " schedules the effect passed in via ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "after_display",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " as",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the last operation in the Bonsai render-loop, right after the DOM has",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "been updated.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let frame_counter =\n  let%sub frames, set_frames = Bonsai.state 0 in\n  let%sub () =\n    Bonsai.Edge.lifecycle\n      ~after_display:\n        (let%map frames = frames\n         and set_frames = set_frames in\n         set_frames (frames + 1))\n      ()\n  in\n  let%arr frames = frames in\n  Vdom.Node.textf \"this component has been alive for %d frames\" frames\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#after-display",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The text I chose for that component was very intentional. I wrote \"this",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "component has been alive for {n} frames\" instead of \"the application has",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "been running for {n} frames\". This is because Edge functions only run if",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "their computation is active. Let's start with a demo, and then discuss",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "what \"active\" means.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let frame_toggler =\n  let%sub showing, set_showing = Bonsai.state false in\n  let%sub output =\n    match%sub showing with\n    | true -> frame_counter\n    | false -> Bonsai.const Vdom.Node.none\n  in\n  let%arr showing = showing\n  and set_showing = set_showing\n  and output = output in\n  let toggle_showing = set_showing (not showing) in\n  let button_text = if showing then \"disable counter\" else \"enable counter\" in\n  let toggle_button =\n    Vdom.Node.button\n      ~attrs:[ Vdom.Attr.on_click (fun _ -> toggle_showing) ]\n      [ Vdom.Node.text button_text ]\n  in\n  Vdom.Node.div [ toggle_button; output ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#only-when-active",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "If you disable the component (wait a few seconds), you'll notice that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the counter picks up where it left off rather than continuing in the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "background.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "As mentioned earlier, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "after_display",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " only runs when the computation is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "\"active\", and as this example demonstrates, being inside of a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "match%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is one way to change the activity status of a computation.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "In fact, aside from ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "match%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", there's only one other combinator that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "influences the active status: ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai.assoc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "Technically, ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "if%sub",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "Bonsai.enum_",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " also have this property, but in",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "reality, ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "if%sub",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " and ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "match%sub",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " are implemented in terms of ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "enum_",
+            "type" : "InlinedCode"
+          }, {
+            "text" : ",",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "so they're all counted together.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "Bonsai.assoc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is used to build a dynamic number of instances of a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "computation.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Just like how",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let%sub a = my_component in\nlet%sub b = my_component in\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "will create two ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "distinct",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " instances of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "my_component",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", each with their",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "own state, ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai.assoc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " can instantiate a dynamic number of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "computations, one instantiation per key-value pair from an incoming",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "_ Map.t Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ".",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "I have a small library,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "url" : "https://ocaml.org/p/bonsai/v0.15.0/doc/Bonsai_web_ui_extendy/index.html",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "Bonsai_web_ui_extendy",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ",",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "which uses ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "assoc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to implement a component for easily creating and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "deleting instances of another component.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We'll reuse the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "frame_counter",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " component built in the first example,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "and combine it with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "extendy",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to get multiple ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "frame_counter",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "s.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Let's see it in use:",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "<!-- $MDX file=../../examples/bonsai_guide_code/edge_examples.ml,part=extendy-use -->",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "{=html}",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let wrap_remove frame_counter remove =\n  let x_button =\n    Vdom.Node.button\n      ~attrs:[ Vdom.Attr.on_click (fun _ -> remove) ]\n      [ Vdom.Node.text \"x\" ]\n  in\n  Vdom.Node.div [ x_button; frame_counter ]\n;;\n\nlet many_frame_watches =\n  let%sub { contents; append; _ } = extendy frame_counter ~wrap_remove in\n  let%arr contents = contents\n  and append = append in\n  let append_button =\n    Vdom.Node.button\n      ~attrs:[ Vdom.Attr.on_click (fun _ -> append) ]\n      [ Vdom.Node.text \"add\" ]\n  in\n  Vdom.Node.div (append_button :: Map.data contents)\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#extendy-use",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "By clicking on the \"add\" button, we create multiple frame-counters, each",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "with their own state, each which began counting at the moment of their",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "creation. It might not be obvious, but clicking on the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "x",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " button not",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "only removes the component from the view, but from the entire Bonsai",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "computation graph, so the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_display",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " effect is also stopped entirely.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "on_activate-on_deactivate",
+      "title" : "on_activate / on_deactivate",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The other two optional parameters to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai.Edge.lifecycle",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " are",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "on_activate",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_deactivate",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", both of which share the same type as",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "after_display",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ": ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "unit Effect.t Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". These effects are run whenever",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the lifecycle computation becomes active or inactive.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "By incorporating a ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "lifecycle",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " computation into a component of yours,",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "the ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "on_activate",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " / ",
+            "type" : "SimpleText"
+          }, {
+            "code" : "on_deactivate",
+            "type" : "InlinedCode"
+          }, {
+            "text" : " callbacks are effectively measuring",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "the activation/deactivation of the containing component.",
+            "type" : "SimpleText"
+          } ]
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Let's modify the lifecycle component to use these new functions. First,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "though, we'll want to do something when the activation/deactivation",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "occurs. For that, I built a tiny logging component which will let me",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "append a list of strings sent by the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "frame_counter",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " component.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Ok, on to the extension of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "frame_counter",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ":",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let frame_counter (log : (string -> unit Ui_effect.t) Value.t) =\n  let%sub frames, set_frames = Bonsai.state 0 in\n  let%sub () =\n    Bonsai.Edge.lifecycle\n      ~on_activate:\n        (let%map log = log in\n         log \"🚀\")\n      ~on_deactivate:\n        (let%map log = log in\n         log \"🔥\")\n      ~after_display:\n        (let%map frames = frames\n         and set_frames = set_frames in\n         set_frames (frames + 1))\n      ()\n  in\n  let%arr frames = frames in\n  Vdom.Node.textf \"this component has been alive for %d frames\" frames\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#extendy-use-2",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "attentionType" : "note",
+        "content" : [ {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "If you don't like the look of",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "lang" : "ocaml",
+          "snippet" : "let%map log = log in\nlog \"🔥\"\n",
+          "lineNumber" : "",
+          "type" : "Snippet"
+        }, {
+          "type" : "Paragraph",
+          "content" : [ {
+            "text" : "you could also write it as",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "lang" : "ocaml",
+          "snippet" : "log >>| Fn.( |> ) \"🔥\"\n",
+          "lineNumber" : "",
+          "type" : "Snippet"
+        }, {
+          "type" : "Paragraph",
+          "content" : [ {
+            "code" : "<br/>",
+            "type" : "InlinedCode"
+          }, {
+            "text" : "{=html}",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "attentionType" : "note",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Please don't though",
+              "type" : "SimpleText"
+            } ]
+          } ],
+          "type" : "AttentionBlock"
+        } ],
+        "type" : "AttentionBlock"
+      }, {
+        "lang" : "",
+        "snippet" : "# on_change\n\nWith the `lifecycle` function as a primitive, we can implement other\nuseful edge-triggering functions. One of these is also included in the\n`Bonsai.Edge` module: `on_change'`.\n\n`on_change'` monitors a `'a Value.t`, and when that value changes, it\ncalls a user-provided function, giving that function both the previous\nand current value. This user-provided function returns an `Effect.t`,\nwhich will be scheduled whenever the value changes.\n\n``````attention-note\nYou currently have all the tools to implement `on_change'` yourself, and\nyou can find the implementation\n[here](https://github.com/janestreet/bonsai/blob/master/src/proc.ml#L832).\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Combining the counter-component from ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/guide/03-state",
+          "isFile" : false,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "Chapter 3",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " and the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "logging component that I used above, we can write a component which",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "contains both a counter and a log, where the log is updated when the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "value changes.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let logging_counter =\n  let%sub log_view, log = logger in\n  let%sub counter_view, counter = counter in\n  let%sub () =\n    let callback =\n      let%map log = log in\n      fun prev cur ->\n        match prev with\n        | None -> Ui_effect.Ignore\n        | Some prev -> log (if prev < cur then \"🚀\" else \"🔥\")\n    in\n    Bonsai.Edge.on_change'\n      ~sexp_of_model:[%sexp_of: Int.t]\n      ~equal:[%equal: Int.t]\n      counter\n      ~callback\n  in\n  let%arr log_view = log_view\n  and counter_view = counter_view in\n  Vdom.Node.div [ counter_view; log_view ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#logging-counter",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "id" : "on_activate-on_deactivate-implications-for-intelligibility-and-testing",
+        "level" : 2,
+        "title" : "Implications for intelligibility and testing",
+        "type" : "SubHeading"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Declarative programs are easy to reason about and test. Extensive use of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Edge",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " module will make your program less and less declarative.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Every time that you have the opportunity, you should opt for using",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "anything other than an ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Edge.*",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " function.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "However, sometimes it's necessary, and we have testing helpers to make",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "your life a bit easier when you do use edge triggering. Because",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "after_display",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " runs its effect, well, after the display has occurred,",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "how would this interact with Bonsai testing functions, like",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Handle.show",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "?",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "To demonstrate, we'll build an ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "awful",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " Bonsai component: a linear chain",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_changes",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ":",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let chain_computation =\n  let%sub a = Bonsai.const \"x\" in\n  let%sub b, set_b =\n    Bonsai.state \" \" ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t]\n  in\n  let%sub c, set_c =\n    Bonsai.state \" \" ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t]\n  in\n  let%sub d, set_d =\n    Bonsai.state \" \" ~sexp_of_model:[%sexp_of: String.t] ~equal:[%equal: String.t]\n  in\n  let%sub () =\n    Bonsai.Edge.on_change\n      ~sexp_of_model:[%sexp_of: String.t]\n      ~equal:[%equal: String.t]\n      a\n      ~callback:set_b\n  in\n  let%sub () =\n    Bonsai.Edge.on_change\n      ~sexp_of_model:[%sexp_of: String.t]\n      ~equal:[%equal: String.t]\n      b\n      ~callback:set_c\n  in\n  let%sub () =\n    Bonsai.Edge.on_change\n      ~sexp_of_model:[%sexp_of: String.t]\n      ~equal:[%equal: String.t]\n      c\n      ~callback:set_d\n  in\n  return (Value.map4 a b c d ~f:(sprintf \"a:%s b:%s c:%s d:%s\"))\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Because ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "on_change",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " triggers at the end of each frame, it should take 4",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "frames to settle. And indeed, in a unit test, that's exactly what we'll",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "see:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let%expect_test \"chained on_change\" =\n  let handle = Handle.create (Result_spec.string (module String)) chain_computation in\n  Handle.show handle;\n  [%expect {| a:x b:  c:  d: |}];\n  Handle.show handle;\n  [%expect {| a:x b:x c:  d: |}];\n  Handle.show handle;\n  [%expect {| a:x b:x c:x d: |}];\n  Handle.show handle;\n  [%expect {| a:x b:x c:x d:x |}];\n  Handle.show handle;\n  [%expect {| a:x b:x c:x d:x |}]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "But ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai_web_test.Handle",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " has a function that makes this a bit nicer:",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "recompute_view_until_stable",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", so we can rewrite the test in a way that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "skips all the intermediate frames:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let%expect_test \"chained on_change with recompute_view_until_stable\" =\n  let handle = Handle.create (Result_spec.string (module String)) chain_computation in\n  Handle.recompute_view_until_stable handle;\n  Handle.show handle;\n  [%expect {| a:x b:x c:x d:x |}]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "recompute_view_until_stable",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is handy, but it's hiding intermediate",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "states. If those intermediate states allow for logical bugs in your",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "application, then you might miss them. As mentioned above: avoid ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Edge",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "if you can; it's a ",
+          "type" : "SimpleText"
+        }, {
+          "type" : "Emphasis",
+          "content" : [ {
+            "text" : "sharp",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : " tool.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695640604521,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Edge Triggering",
+      "pageMeta" : {
+        "title" : [ "Edge Triggering" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "09-edge-triggering",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "after_display",
+        "id" : "after_display"
+      }, {
+        "title" : "on_activate / on_deactivate",
+        "id" : "on_activate-on_deactivate"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>

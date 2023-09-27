@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" /> 
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"> 
+<title>Bonsai: Dynamism</title>
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/katex.min.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/main.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/static/css/global-overrides.css">
+<link rel="stylesheet" type="text/css" href="/bonsai/style.css">
+</head>
+<link rel="shortcut icon" href="/bonsai/favicon.png"type="image/ico"/>
+<body class="theme-znai-dark">
+<script>(function() {
+    var themeNameKey = 'znaiTheme';
+    var darkThemeName = 'znai-dark';
+    var lightThemeName = 'default';
+
+    var znaiTheme = {
+        changeHandlers: [],
+        addChangeHandler(handler) {
+            this.changeHandlers.push(handler);
+        },
+        removeChangeHandler(handler) {
+            var idx = this.changeHandlers.indexOf(handler);
+            this.changeHandlers.splice(idx, 1);
+        },
+        set(name) {
+            this.name = name;
+            document.body.className = 'theme-' + name;
+
+            var idx = 0;
+            var len = this.changeHandlers.length;
+            for (; idx < len; idx++) {
+                this.changeHandlers[idx](name);
+            }
+        },
+        setExplicitly(name) {
+            storeThemeName(name);
+            this.set(name);
+        },
+        setExplicitlyIfNotSetAlready(name) {
+            const themeName = getStoredThemeName();
+            if (themeName) {
+                return
+            }
+
+            this.setExplicitly(name)
+        },
+        toggle() {
+            this.setExplicitly(this.name === lightThemeName ? darkThemeName : lightThemeName)
+        }
+    };
+
+    var mediaThemeName = setLightMatchMediaListenerAndGetThemeName()
+    var themeName = getStoredThemeName() || mediaThemeName;
+    znaiTheme.set(themeName);
+
+    window.znaiTheme = znaiTheme;
+
+    function getStoredThemeName() {
+        return localStorage.getItem(themeNameKey);
+    }
+
+    function storeThemeName(name) {
+        return localStorage.setItem(themeNameKey, name);
+    }
+
+    function setLightMatchMediaListenerAndGetThemeName() {
+        if (!window.matchMedia) {
+            return darkThemeName;
+        }
+
+        var lightQuery = window.matchMedia('(prefers-color-scheme: light)');
+        lightQuery.addListener(function (e) {
+            const newThemeName = e.matches ? lightThemeName : darkThemeName;
+            znaiTheme.setExplicitly(newThemeName);
+        });
+
+        return lightQuery.matches ? lightThemeName : darkThemeName;
+    }
+})()</script>
+<div id="znai"><div id="znai-initial-page-loading" style="margin: -20px 0 0 -20px; padding: 0 40px 40px 0; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center">
+    <div></div>
+</div><section style="max-width: 640px; margin-left: auto; margin-right: auto;">
+<article>
+<header><h1>Values and computations</h1></header>
+<p>Dynamism is central to engaging applications: as the state of the world changes, so should the UI.The previous chapter introduced an immutable view type, Vdom.Node.t along with the idea that the UI is a function from data to view. For large and dynamic input data, this function is expensive and must run quite often. To keep up with quickly changing data, we would like to only re-compute the parts of the view that depend on newly changed data.This chapter takes a detour from the theme of computing web UIs to investigate the core Bonsai abstractions. It may be surprising to know that Bonsai isn't specialized for user interfaces; rather, it answers the very generic question of how to build composable incremental state-machines. As it turns out, incremental state-machines are a great abstraction for building UI! This chapter is more complicated than we might like due to a longstanding quirk of Bonsai's architecture. We'll begin by describing the more ideal way to think about Bonsai, and then we'll explain why it isn't quite accurate. Bonsai is all about constructing incremental state machine graphs. A 'a Value.t is a node in a graph that represents a 'a that changes over time. A 'a Computation.t is an entire graph that might contain many Value.t of different types, but culminates in a 'a Value.t . The motivation for having two types will be thoroughly explored later, but let us start with something basic: building a graph that computes a value that depends on two other values. ocaml let juxtapose_digits ~(delimiter : string) (a : int Value.t) (b : int Value.t) : string Computation.t = let%arr a = a and b = b in Int.to_string a ^ delimiter ^ Int.to_string b ;; The two phrases a = a and b = b may look a little silly, but they are necessary. The expression on the right-hand side of both bindings in the let%arr has type int Value.t , but the pattern on the left hand side is a plain old int that we can freely pass to Int.to_string . So let%arr is useful for &quot;unwrapping&quot; the data inside a Value.t so that we can access it for a limited scope.The type of the entire let%arr expression, which includes the stuff on both sides of in , is string Computation.t rather than string Value.t . This means that the result is a graph and not a node in a graph. To obtain the final node of a Computation.t graph, we can use a let%sub expression. ocaml let _juxtapose_and_sum (a : int Value.t) (b : int Value.t) : string Computation.t = let%sub juxtaposed = juxtapose_digits ~delimiter:&quot; + &quot; a b in let%sub sum = let%arr a = a and b = b in Int.to_string (a + b) in let%arr juxtaposed = juxtaposed and sum = sum in juxtaposed ^ &quot; = &quot; ^ sum ;; We provide a computation and let%sub provides a name we can use to refer to the result node of that computation. In the first let%sub above, the computation is juxtapose_digits a b and the name is juxtaposed . The important thing about using let%sub is that juxtaposed has type string Value.t , so we can freely use it in let%arr expressions.A subtle, yet extremely important aspect of let%sub is that it makes a copy of the input computation, and the node that the name refers to is the result node of that copy, rather than of the original. This means that if you use let%sub twice on the same computation, you get access to the result nodes for two independent copies of the same graph. All we've encountered so far are pure function computations constructed with let%arr , so having multiple copies of a graph is useless, since all the copies will always be producing identical results. The ability to copy is useful when computations contain internal state.The following example demonstrates how to use Bonsai.state , a primitive computation for introducing internal state to a computation. Notice that we get access to two result nodes: count is the state's current value and set_count is a function for updating that value. ocaml let (counter_button : Vdom.Node.t Computation.t) = let%sub count, set_count = Bonsai.state 0 in let%arr count = count and set_count = set_count in (* view-construction logic *) Vdom.Node.div [ Vdom.Node.text [%string &quot;Counter value: %{count#Int}&quot;] ; Vdom.Node.button ~attrs:[ Vdom.Attr.on_click (fun _ -&gt; set_count (count + 1)) ] [ Vdom.Node.text &quot;increment count&quot; ] ] ;; Now we can illustrate the power of being able to instantiate a component twice. The following code demonstrates that we can use let%sub on counter_button to get three independent counters. ocaml let (three_counters : Vdom.Node.t Computation.t) = let%sub counter1 = counter_button in let%sub counter2 = counter_button in let%sub counter3 = counter_button in let%arr counter1 = counter1 and counter2 = counter2 and counter3 = counter3 in Vdom.Node.div [ counter1; counter2; counter3 ] ;; Every time we instantiate counter_button with let%sub , we get a Vdom.Node.t Value.t that represents the final result node of a copy of the counter_button computation graph. We use Vdom.Node.div to build a user interface that contains all three buttons so the user can click on them; however, first we need to use let%arr to get access to the view inside each counter graph node.The role of let%sub in Bonsai is similar to the new keyword in an object-oriented programming language. Just like new makes a brand new copy of the specified class with its own independent mutable fields, so also does let%sub make a brand new copy of the specified computation with its own independent internal state. In addition, just like new usually yields a reference/pointer (in languages like C# or Java) instead of the data itself, so also does let%sub yield merely the result node of the newly copied graph instead of the graph itself.We've introduced two basic kinds of computations - state, which may be introduced by Bonsai.state , and work, which may be introduced by let%arr . While these are certainly the most important, Bonsai provides primitive computations for a few other things, such as time-varying and edge-triggering computations.We've also introduced the primary means by which you construct larger computations from smaller ones - let%sub . Part of the learning curve of building Bonsai apps is getting comfortable composing together a bunch of little computations.</p>
+</article>
+
+<article>
+<header><h1>The scary side of values</h1></header>
+<p>The previous section intentionally did not explain that Value.t is an applicative, which means that it works with the let%map syntax, in addition to the let%arr syntax we've already introduced. The difference between the two is very small: let%arr expands to the expansion of let%map , except it wraps the entire thing in a call to return . The following ocaml skip let f (x : int Value.t) : int Computation.t = let%arr x = x in x + 1 expands to ocaml skip let f (x : int Value.t) : int Computation.t = return (let%map x = x in x + 1) which further expands to ocaml skip let f (x : int Value.t) : int Computation.t = return (Value.map x ~f:(fun x -&gt; x + 1)) The Value.t applicative interface is scary because re-using the result of a let%map expression causes the work that it represents to be duplicated. Consider the following computation. ocaml let component (xs : int list Value.t) : string Computation.t = let sum = let%map xs = xs in List.fold xs ~init:0 ~f:( + ) in let average = let%map sum = sum and xs = xs in let length = List.length xs in if length = 0 then 0 else sum / length in let%arr sum = sum and average = average in [%string &quot;sum = %{sum#Int}, average = %{average#Int}&quot;] ;; We would like this computation to only do the work of computing sum once; however, every usage of sum entails an iteration through the list. Note that the final result depends on sum directly, but also indirectly through average ; this means that sum is computed twice in order to produce the formatted string.This explanation seems to contradict the explanation in the beginning of this chapter that computations are graphs and values are nodes in the graph. The truth is that values are also graphs, and re-using a value entails using another copy of that value's graph, thus duplicating any work contained in the graph. To avoid this work duplication, we can instantiate the value with let%sub , but since let%sub only instantiates computations, we must wrap the let%map inside a call to return . For consistency and robustness, we'll apply this transformation to average as well, even though it is only used once. ocaml let component (xs : int list Value.t) : string Computation.t = let%sub sum = return (let%map xs = xs in List.fold xs ~init:0 ~f:( + )) in let%sub average = return (let%map sum = sum and xs = xs in let length = List.length xs in if length = 0 then 0 else sum / length) in return (let%map sum = sum and average = average in [%string &quot;sum = %{sum#Int}, average = %{average#Int}&quot;]) ;; Before the introduction of let%arr , this was the idiomatic way of using Bonsai. However, now that let%arr exists, we can transform the above code into the following, exactly equivalent, computation: ocaml let component (xs : int list Value.t) : string Computation.t = let%sub sum = let%arr xs = xs in List.fold xs ~init:0 ~f:( + ) in let%sub average = let%arr sum = sum and xs = xs in let length = List.length xs in if length = 0 then 0 else sum / length in let%arr sum = sum and average = average in [%string &quot;sum = %{sum#Int}, average = %{average#Int}&quot;] ;; While the Value.t applicative can have surprising behavior, if you restrict yourself to only use let%sub and let%arr , then you won't ever accidentally duplicate work.</p>
+</article>
+
+<article>
+<header><h1>Inputs to the graph</h1></header>
+<p>Dynamic data flows into the graph through 'a Var.t , the third main type in Bonsai. A var is similar to a ref or the analogous 'a Incr.Var.t from incremental. ocaml type 'a t (** Creates a var with an initial value. *) val create : 'a -&gt; 'a t (** Runs a function over the current value and updates it to the result. *) val update : 'a t -&gt; f:('a -&gt; 'a) -&gt; unit (** Change the current value. *) val set : 'a t -&gt; 'a -&gt; unit (** Retrieve the current value. *) val get : 'a t -&gt; 'a (** Get a value that tracks the current value, for use in a computation. *) val value : 'a t -&gt; 'a Value.t The typical use-case for a var is that there is some source of ever-changing data, such as a Polling_state_rpc from a server. The Bonsai app will subscribe to these changes with a callback that updates the var with the new data that it received. The main app computation then receives the value-ified var after it has been passed through Var.value . Here is a concrete example: ocaml let counter_every_second : int Value.t = let counter_var : int Bonsai.Var.t = Bonsai.Var.create (-1) in every (Time_ns.Span.of_sec 1.0) (fun () -&gt; Bonsai.Var.update counter_var ~f:(fun i -&gt; i + 1)); Bonsai.Var.value counter_var ;; let view_for_counter : Vdom.Node.t Computation.t = let%arr counter = counter_every_second in Vdom.Node.textf &quot;counter: %d&quot; counter ;;</p>
+</article>
+
+<article>
+<header><h1>Bonsai is a compiler</h1></header>
+<p>The Bonsai library does not provide the logic for stabilizing an incremental function and extracting the output value. Instead, it compiles the value and computation &quot;surface syntax&quot; into the &quot;assembly language&quot; provided by the Incremental library. Compilation happens once when the app starts up, and thereafter the main program only interacts with the app in Incr.t form.The Bonsai API is carefully designed to allow its compiler to statically analyze the entire graph. This is why we ../blogs/why_no_bind.md don't provide bind, since the callback passed to bind is an opaque function. There are few important consequences of the static analyzability of Bonsai graphs:Compilation to incremental nodes only needs to happen once, at startup. We can run &quot;whole-program analysis&quot; on the graph to optimize and seriously condense the computation graph. We have the ability to instrument each node in a computation with performance and debugging info. Eventually we plan to use this info to implement a debugger and profiler for Bonsai computations.</p>
+</article>
+</section>
+</div>
+<script type="text/javascript" src="/bonsai/footer.js"></script>
+<script type="text/javascript" src="/bonsai/toc.js"></script>
+<script type="text/javascript" src="/bonsai/assets.js"></script>
+<script type="text/javascript" src="/bonsai/static/main.js"></script>
+<script type="text/javascript" src="/bonsai/search-index.js"></script>
+<script>
+document.getElementById('znai').innerHTML = '';
+/*<!--*/
+ReactDOM.render(React.createElement(Documentation, {
+  "docMeta" : {
+    "viewOn" : {
+      "link" : "your-custom-base-url",
+      "title" : "View On GitHub"
+    },
+    "id" : "bonsai",
+    "title" : "Bonsai",
+    "type" : "Guide",
+    "previewEnabled" : false
+  },
+  "page" : {
+    "type" : "Page",
+    "content" : [ {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "Dynamism is central to engaging applications: as the state of the world",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "changes, so should the UI.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "The previous chapter introduced an immutable view type, ",
+        "type" : "SimpleText"
+      }, {
+        "code" : "Vdom.Node.t",
+        "type" : "InlinedCode"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "along with the idea that the UI is a function from data to view. For",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "large and dynamic input data, this function is expensive and must run",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "quite often. To keep up with quickly changing data, we would like to",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "only re-compute the parts of the view that depend on newly changed data.",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "type" : "Paragraph",
+      "content" : [ {
+        "text" : "This chapter takes a detour from the theme of computing web UIs to",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "investigate the core Bonsai abstractions. It may be surprising to know",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "that Bonsai isn't specialized for user interfaces; rather, it answers",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "the very generic question of how to build composable incremental",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "state-machines. As it turns out, incremental state-machines are a great",
+        "type" : "SimpleText"
+      }, {
+        "type" : "SoftLineBreak"
+      }, {
+        "text" : "abstraction for building UI!",
+        "type" : "SimpleText"
+      } ]
+    }, {
+      "attentionType" : "note",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This chapter is more complicated than we might like due to a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "longstanding quirk of Bonsai's architecture. We'll begin by describing",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the more ideal way to think about Bonsai, and then we'll explain why it",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "isn't quite accurate.",
+          "type" : "SimpleText"
+        } ]
+      } ],
+      "type" : "AttentionBlock"
+    }, {
+      "id" : "values-and-computations",
+      "title" : "Values and computations",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Bonsai is all about constructing incremental state machine graphs. A",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "'a Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is a node in a graph that represents a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " that changes",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "over time. A ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is an entire graph that might contain",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "many ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " of different types, but culminates in a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". The",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "motivation for having two types will be thoroughly explored later, but",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "let us start with something basic: building a graph that computes a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "value that depends on two other values.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let juxtapose_digits ~(delimiter : string) (a : int Value.t) (b : int Value.t)\n  : string Computation.t\n  =\n  let%arr a = a\n  and b = b in\n  Int.to_string a ^ delimiter ^ Int.to_string b\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The two phrases ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "a = a",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "b = b",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " may look a little silly, but they",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "are necessary. The expression on the right-hand side of both bindings in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " has type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "int Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", but the pattern on the left hand",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "side is a plain old ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "int",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " that we can freely pass to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Int.to_string",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". So",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is useful for \"unwrapping\" the data inside a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " so that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "we can access it for a limited scope.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The type of the entire ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " expression, which includes the stuff on",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "both sides of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "in",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "string Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " rather than",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "string Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". This means that the result is a graph and not a node",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "in a graph. To obtain the final node of a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Computation.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " graph, we can",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "use a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " expression.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let _juxtapose_and_sum (a : int Value.t) (b : int Value.t) : string Computation.t =\n  let%sub juxtaposed = juxtapose_digits ~delimiter:\" + \" a b in\n  let%sub sum =\n    let%arr a = a\n    and b = b in\n    Int.to_string (a + b)\n  in\n  let%arr juxtaposed = juxtaposed\n  and sum = sum in\n  juxtaposed ^ \" = \" ^ sum\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We provide a computation and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " provides a name we can use to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "refer to the result node of that computation. In the first ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "above, the computation is ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "juxtapose_digits a b",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and the name is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "juxtaposed",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". The important thing about using ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is that",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "juxtaposed",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " has type ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "string Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", so we can freely use it in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " expressions.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "A subtle, yet extremely important aspect of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is that it makes a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "copy of the input computation, and the node that the name refers to is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the result node of that copy, rather than of the original. This means",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "that if you use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " twice on the same computation, you get access",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "to the result nodes for two independent copies of the same graph. All",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "we've encountered so far are pure function computations constructed with",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", so having multiple copies of a graph is useless, since all",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the copies will always be producing identical results. The ability to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "copy is useful when computations contain internal state.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The following example demonstrates how to use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai.state",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "primitive computation for introducing internal state to a computation.",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Notice that we get access to two result nodes: ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "count",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is the state's",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "current value and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "set_count",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is a function for updating that value.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let (counter_button : Vdom.Node.t Computation.t) =\n  let%sub count, set_count = Bonsai.state 0 in\n  let%arr count = count\n  and set_count = set_count in\n  (* view-construction logic *)\n  Vdom.Node.div\n    [ Vdom.Node.text [%string \"Counter value: %{count#Int}\"]\n    ; Vdom.Node.button\n        ~attrs:[ Vdom.Attr.on_click (fun _ -> set_count (count + 1)) ]\n        [ Vdom.Node.text \"increment count\" ]\n    ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#counter_button",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Now we can illustrate the power of being able to instantiate a component",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "twice. The following code demonstrates that we can use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " on",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "counter_button",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to get three independent counters.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let (three_counters : Vdom.Node.t Computation.t) =\n  let%sub counter1 = counter_button in\n  let%sub counter2 = counter_button in\n  let%sub counter3 = counter_button in\n  let%arr counter1 = counter1\n  and counter2 = counter2\n  and counter3 = counter3 in\n  Vdom.Node.div [ counter1; counter2; counter3 ]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#three_counters",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Every time we instantiate ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "counter_button",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", we get a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Vdom.Node.t Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " that represents the final result node of a copy of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "counter_button",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " computation graph. We use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Vdom.Node.div",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to build",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "a user interface that contains all three buttons so the user can click",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "on them; however, first we need to use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " to get access to the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "view inside each counter graph node.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The role of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " in Bonsai is similar to the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "new",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " keyword in an",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "object-oriented programming language. Just like ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "new",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " makes a brand new",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "copy of the specified class with its own independent mutable fields, so",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "also does ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " make a brand new copy of the specified computation",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "with its own independent internal state. In addition, just like ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "new",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "usually yields a reference/pointer (in languages like C# or Java)",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "instead of the data itself, so also does ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " yield merely the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "result node of the newly copied graph instead of the graph itself.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We've introduced two basic kinds of computations - state, which may be",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "introduced by ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai.state",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", and work, which may be introduced by",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". While these are certainly the most important, Bonsai provides",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "primitive computations for a few other things, such as time-varying and",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "edge-triggering computations.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We've also introduced the primary means by which you construct larger",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "computations from smaller ones - ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". Part of the learning curve",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of building Bonsai apps is getting comfortable composing together a",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "bunch of little computations.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "the-scary-side-of-values",
+      "title" : "The scary side of values",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The previous section intentionally did not explain that ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is an",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "applicative, which means that it works with the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%map",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " syntax, in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "addition to the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " syntax we've already introduced. The",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "difference between the two is very small: ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " expands to the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "expansion of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%map",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", except it wraps the entire thing in a call to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "return",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". The following",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "ocaml skip let f (x : int Value.t) : int Computation.t =   let%arr x = x in   x + 1",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "expands to",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "ocaml skip let f (x : int Value.t) : int Computation.t =   return     (let%map x = x in      x + 1)",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "which further expands to",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "code" : "ocaml skip let f (x : int Value.t) : int Computation.t =   return (Value.map x ~f:(fun x -> x + 1))",
+          "type" : "InlinedCode"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " applicative interface is scary because re-using the result",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "of a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%map",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " expression causes the work that it represents to be",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "duplicated. Consider the following computation.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let component (xs : int list Value.t) : string Computation.t =\n  let sum =\n    let%map xs = xs in\n    List.fold xs ~init:0 ~f:( + )\n  in\n  let average =\n    let%map sum = sum\n    and xs = xs in\n    let length = List.length xs in\n    if length = 0 then 0 else sum / length\n  in\n  let%arr sum = sum\n  and average = average in\n  [%string \"sum = %{sum#Int}, average = %{average#Int}\"]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "We would like this computation to only do the work of computing ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "sum",
+          "type" : "InlinedCode"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "once; however, every usage of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "sum",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " entails an iteration through the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "list. Note that the final result depends on ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "sum",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " directly, but also",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "indirectly through ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "average",
+          "type" : "InlinedCode"
+        }, {
+          "text" : "; this means that ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "sum",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is computed twice in",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "order to produce the formatted string.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "This explanation seems to contradict the explanation in the beginning of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "this chapter that computations are graphs and values are nodes in the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "graph. The truth is that values are also graphs, and re-using a value",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "entails using another copy of that value's graph, thus duplicating any",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "work contained in the graph. To avoid this work duplication, we can",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "instantiate the value with ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", but since ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " only",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "instantiates computations, we must wrap the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%map",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " inside a call to",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "return",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". For consistency and robustness, we'll apply this",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "transformation to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "average",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " as well, even though it is only used once.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let component (xs : int list Value.t) : string Computation.t =\n  let%sub sum =\n    return\n      (let%map xs = xs in\n       List.fold xs ~init:0 ~f:( + ))\n  in\n  let%sub average =\n    return\n      (let%map sum = sum\n       and xs = xs in\n       let length = List.length xs in\n       if length = 0 then 0 else sum / length)\n  in\n  return\n    (let%map sum = sum\n     and average = average in\n     [%string \"sum = %{sum#Int}, average = %{average#Int}\"])\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Before the introduction of ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", this was the idiomatic way of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "using Bonsai. However, now that ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " exists, we can transform the",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "above code into the following, exactly equivalent, computation:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let component (xs : int list Value.t) : string Computation.t =\n  let%sub sum =\n    let%arr xs = xs in\n    List.fold xs ~init:0 ~f:( + )\n  in\n  let%sub average =\n    let%arr sum = sum\n    and xs = xs in\n    let length = List.length xs in\n    if length = 0 then 0 else sum / length\n  in\n  let%arr sum = sum\n  and average = average in\n  [%string \"sum = %{sum#Int}, average = %{average#Int}\"]\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "While the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Value.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " applicative can have surprising behavior, if you",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "restrict yourself to only use ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%sub",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " and ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "let%arr",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", then you won't",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "ever accidentally duplicate work.",
+          "type" : "SimpleText"
+        } ]
+      } ]
+    }, {
+      "id" : "inputs-to-the-graph",
+      "title" : "Inputs to the graph",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "Dynamic data flows into the graph through ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "'a Var.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ", the third main",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "type in Bonsai. A var is similar to a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "ref",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " or the analogous",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "'a Incr.Var.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " from incremental.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "type 'a t\n\n(** Creates a var with an initial value. *)\nval create : 'a -> 'a t\n\n(** Runs a function over the current value and updates it to the result. *)\nval update : 'a t -> f:('a -> 'a) -> unit\n\n(** Change the current value. *)\nval set : 'a t -> 'a -> unit\n\n(** Retrieve the current value. *)\nval get : 'a t -> 'a\n\n(** Get a value that tracks the current value, for use in a computation. *)\nval value : 'a t -> 'a Value.t\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The typical use-case for a var is that there is some source of",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "ever-changing data, such as a ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Polling_state_rpc",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " from a server. The",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "Bonsai app will subscribe to these changes with a callback that updates",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "the var with the new data that it received. The main app computation",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "then receives the value-ified var after it has been passed through",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "code" : "Var.value",
+          "type" : "InlinedCode"
+        }, {
+          "text" : ". Here is a concrete example:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "lang" : "ocaml",
+        "snippet" : "let counter_every_second : int Value.t =\n  let counter_var : int Bonsai.Var.t = Bonsai.Var.create (-1) in\n  every (Time_ns.Span.of_sec 1.0) (fun () ->\n    Bonsai.Var.update counter_var ~f:(fun i -> i + 1));\n  Bonsai.Var.value counter_var\n;;\n\nlet view_for_counter : Vdom.Node.t Computation.t =\n  let%arr counter = counter_every_second in\n  Vdom.Node.textf \"counter: %d\" counter\n;;\n",
+        "lineNumber" : "",
+        "type" : "Snippet"
+      }, {
+        "src" : "/bonsai/bonsai-build/#counter",
+        "fit" : true,
+        "light" : {
+          "background" : "#e9edf2",
+          "color-scheme" : "light",
+          "color" : "#28487c"
+        },
+        "dark" : {
+          "background" : "#101318",
+          "color-scheme" : "dark",
+          "color" : "#bac9e2"
+        },
+        "type" : "Iframe"
+      } ]
+    }, {
+      "id" : "bonsai-is-a-compiler",
+      "title" : "Bonsai is a compiler",
+      "type" : "Section",
+      "content" : [ {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Bonsai",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library does not provide the logic for stabilizing an",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "incremental function and extracting the output value. Instead, it",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "compiles the value and computation \"surface syntax\" into the \"assembly",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "language\" provided by the ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Incremental",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " library. Compilation happens",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "once when the app starts up, and thereafter the main program only",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "interacts with the app in ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "Incr.t",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " form.",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "type" : "Paragraph",
+        "content" : [ {
+          "text" : "The Bonsai API is carefully designed to allow its compiler to statically",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "analyze the entire graph. This is why we ",
+          "type" : "SimpleText"
+        }, {
+          "url" : "/bonsai/blogs/why_no_bind.md",
+          "isFile" : true,
+          "type" : "Link",
+          "content" : [ {
+            "text" : "don't provide",
+            "type" : "SimpleText"
+          }, {
+            "type" : "SoftLineBreak"
+          }, {
+            "text" : "bind",
+            "type" : "SimpleText"
+          } ]
+        }, {
+          "text" : ", since the callback passed to ",
+          "type" : "SimpleText"
+        }, {
+          "code" : "bind",
+          "type" : "InlinedCode"
+        }, {
+          "text" : " is",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "an opaque function. There are few important consequences of the static",
+          "type" : "SimpleText"
+        }, {
+          "type" : "SoftLineBreak"
+        }, {
+          "text" : "analyzability of Bonsai graphs:",
+          "type" : "SimpleText"
+        } ]
+      }, {
+        "bulletMarker" : "-",
+        "tight" : true,
+        "type" : "BulletList",
+        "content" : [ {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "Compilation to incremental nodes only needs to happen once, at",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "startup.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "We can run \"whole-program analysis\" on the graph to optimize and",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "seriously condense the computation graph.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        }, {
+          "type" : "ListItem",
+          "content" : [ {
+            "type" : "Paragraph",
+            "content" : [ {
+              "text" : "We have the ability to instrument each node in a computation with",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "performance and debugging info. Eventually we plan to use this info",
+              "type" : "SimpleText"
+            }, {
+              "type" : "SoftLineBreak"
+            }, {
+              "text" : "to implement a debugger and profiler for Bonsai computations.",
+              "type" : "SimpleText"
+            } ]
+          } ]
+        } ]
+      } ]
+    } ],
+    "lastModifiedTime" : 1695814630495,
+    "tocItem" : {
+      "chapterTitle" : "Guide",
+      "pageTitle" : "Dynamism",
+      "pageMeta" : {
+        "title" : [ "Dynamism" ]
+      },
+      "dirName" : "guide",
+      "fileName" : "02-dynamism",
+      "viewOnRelativePath" : null,
+      "pageSectionIdTitles" : [ {
+        "title" : "Values and computations",
+        "id" : "values-and-computations"
+      }, {
+        "title" : "The scary side of values",
+        "id" : "the-scary-side-of-values"
+      }, {
+        "title" : "Inputs to the graph",
+        "id" : "inputs-to-the-graph"
+      }, {
+        "title" : "Bonsai is a compiler",
+        "id" : "bonsai-is-a-compiler"
+      } ]
+    }
+  }
+}), document.getElementById("znai"));
+/*-->*/
+
+</script>
+
+</body>
+</html>
